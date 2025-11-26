@@ -159,9 +159,9 @@ class SubtitleSet(MyModel):
             # 2. Текст субтитра
             text_line = line.text
 
-            # Добавляем имя персонажа, если оно есть
-            if line.name:
-                text_line = f"<{line.name}> {text_line}"
+            if getattr(line, 'name', None) and line.name.strip():
+                # Формат: <b>Имя:</b> Текст субтитра
+                text_line = f"<b>{line.name.strip()}:</b> {text_line}"
 
             vtt_content.append(text_line)
             vtt_content.append("") # Пустая строка для разделения меток

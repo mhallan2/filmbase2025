@@ -135,8 +135,8 @@ function initializeSubtitleSync(vttUrl, playerIframeId, overlayElementId) {
                 if (i !== currentCueIndex) {
                     currentCueIndex = i;
                     // Отображение текста
-                    subtitleElement.textContent = cue.text.replace(/<.*?>/g, ''); 
-                    subtitleElement.className = ''; // Сброс классов
+                    subtitleElement.innerHTML = cue.text;
+                    subtitleElement.className = '';
                     
                     // Добавление CSS-классов
                     if (cue.classes) {

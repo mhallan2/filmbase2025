@@ -27,7 +27,16 @@
     color: white; 
     font-size: 1.5rem; 
     line-height: 1.2;
-    padding: 0 10%; 
+    padding: 0 10%;
+    /* Элемент растягивается на весь контейнер */
+    display: flex;
+    justify-content: center;
+
+    /* ИСПРАВЛЕНИЕ: Прижимает содержимое (текст) к нижнему краю контейнера */
+    align-items: flex-end;
+
+    /* Добавьте отступ снизу, чтобы текст не был в самом углу */
+    padding-bottom: 5vh;
 
     /* Тень для читаемости на любом фоне (важно для видео) */
     text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.9); 
