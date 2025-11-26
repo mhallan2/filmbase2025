@@ -1,10 +1,11 @@
 from dal import autocomplete
 from django.shortcuts import get_object_or_404, redirect, render
 from django.contrib.auth.decorators import user_passes_test
-from .models import Country, Film, Genre, Person
+from .models import Country, Film, Genre, Person, SubtitleSet
 from .forms import CountryForm, GenreForm, FilmForm, PersonForm
 from .helpers import paginate
 from django.contrib import messages
+from django.http import HttpResponse, Http404
 
 
 def check_admin(user):
@@ -244,3 +245,21 @@ class CountryAutocomplete(autocomplete.Select2QuerySetView):
         if self.q:
             countries = countries.filter(name__istartswith=self.q)
         return countries
+
+def get_subtitles(request, film_id, language_code):
+    """
+    Отдает WebVTT файл по запросу клиента.
+    URL: /films/123/subtitles/ru.vtt
+    """
+    try:
+        subtitle_set = SubtitleSet.objects.get(
+            film_id=film_id,
+            language__iexact=language_code
+        )
+    except SubtitleSet.DoesNotExist:
+        raise Http404("Набор субтитров не найден для указанного фильма и языка.")
+
+    vtt_content = subtitle_set.generate_vtt()
+
+    response = HttpResponse(vtt_content, content_type='text/vtt')
+    return response

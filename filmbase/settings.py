@@ -136,3 +136,5 @@ LOGIN_REDIRECT_URL = 'films:home'
 
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+
+SECURE_REFERRER_POLICY = "no-referrer-when-downgrade"

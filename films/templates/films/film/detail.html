@@ -1,7 +1,6 @@
 {% extends 'films/base.html' %}
 {% load films_tags %}
-
-{% block breadcrumb %}
+{% load static %}  {% block breadcrumb %}
   <nav>
     <ol class="breadcrumb">
       <li class="breadcrumb-item">
@@ -96,13 +95,43 @@
               </dd>
             {% endif %}
           </dl>
+
           {% if film.trailer_url %}
-            <div class="ratio ratio-16x9">
-              <iframe src="{{ film.trailer_url }}" title="YouTube video" allowfullscreen></iframe>
+            <h5 class="mt-4">Видео с субтитрами</h5>
+            <div
+                class="main-video-wrapper ratio ratio-16x9"
+                data-film-id="{{ film.id }}"
+                data-lang-code="ru"
+            >
+                <iframe
+                    id="youtube-player"
+                    src="{{ film.trailer_url }}?enablejsapi=1"
+                    title="{{ film.name }}"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowfullscreen
+                    style="width: 100%; height: 100%;"
+                ></iframe>
+
+                <div id="custom-subtitle-overlay"></div>
             </div>
+
+            <script src="{% static 'films/js/subtitle_sync.js' %}"></script>
+
+            <script>
+                (function() {
+                    // ИСПРАВЛЕНИЕ: Убираем ручное добавление '/films/' +
+                    // Просто используем результат работы тега url
+                    var vttUrl = "{% url 'films:get_subtitles' film_id=film.id language_code='ru' %}";
+
+                    if (typeof initializeSubtitleSync !== 'undefined') {
+                        initializeSubtitleSync(vttUrl, 'youtube-player', 'custom-subtitle-overlay');
+                    }
+                })();
+            </script>
           {% endif %}
+
         </div>
       </div>
     </div>
   </div>
-  {% endblock %}
+{% endblock %}
