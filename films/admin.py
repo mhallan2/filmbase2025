@@ -2,37 +2,38 @@ from django.contrib import admin
 from .models import Country, Film, Person, Genre, SubtitleSet, SubtitleLine
 
 
-# 1. Inline для SubtitleLine (встроенное редактирование)
+# 1. Inline для строк субтитров
 class SubtitleLineInline(admin.TabularInline):
-    """
-    Позволяет редактировать строки SubtitleLine прямо внутри страницы SubtitleSet.
-    Используем TabularInline для компактного отображения таблицы.
-    """
     model = SubtitleLine
-    # Указываем, какие поля должны отображаться
+    # Поля, доступные для редактирования. Сортировка по времени
     fields = ('start_time', 'end_time', 'text', 'name', 'style_classes')
-    extra = 1 # Количество пустых строк для добавления по умолчанию
+    ordering = ('start_time',)
+    extra = 0 # Не добавлять пустые формы по умолчанию
+    can_delete = True
 
+# 2. Inline для набора субтитров (чтобы видеть их прямо в фильме)
+class SubtitleSetInline(admin.StackedInline):
+    model = SubtitleSet
+    inlines = [SubtitleLineInline] # Здесь вложены строки
+    fields = ('language',)
+    extra = 0
+    # Поле 'language' должно быть уникальным,
+    # а SubtitleLineInline позволит редактировать сами строки
 
-# 2. Регистрация SubtitleSet
+@admin.register(Film)
+class FilmAdmin(admin.ModelAdmin):
+    list_display = ('name', 'year', 'director', 'kinopoisk_id')
+    inlines = [SubtitleSetInline] # Добавляем возможность видеть и редактировать наборы субтитров
+
+# Отдельно регистрируем SubtitleSet (если нужно)
 @admin.register(SubtitleSet)
 class SubtitleSetAdmin(admin.ModelAdmin):
-    """Регистрация SubtitleSet в админ-панели."""
-    # Поля, отображаемые в общем списке наборов
-    list_display = ('film', 'language', 'line_count')
+    list_display = ('film', 'language')
     list_filter = ('language',)
-    search_fields = ('film__name', 'language')
-
-    # Ключевой момент: добавляем Inline для редактирования строк
-    inlines = [SubtitleLineInline]
-
-    def line_count(self, obj):
-        """Метод для подсчета количества строк в наборе."""
-        return obj.lines.count()
-    line_count.short_description = 'Кол-во строк'
+    search_fields = ('film__name',)
+    inlines = [SubtitleLineInline] # Добавляем возможность редактировать строки
 
 # 3. Регистрация существующих моделей
-admin.site.register(Film)
 admin.site.register(Person)
 admin.site.register(Country)
 admin.site.register(Genre)

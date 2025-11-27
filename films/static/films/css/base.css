@@ -1,69 +1,79 @@
-/* Стили для Select2 (существующий код) */
-.select2-container .select2-selection--single {
-    min-height: 2.5rem;
-}
 
-/* ---------------------------------------------------------------------- */
-/* --- НОВЫЕ СТИЛИ ДЛЯ СУБТИТРОВ (YouTube Overlay) ---------------------- */
-/* ---------------------------------------------------------------------- */
-
-/* 1. Главный контейнер для позиционирования */
 .main-video-wrapper {
-    position: relative; 
-    /* Обеспечивает, что дочерние элементы (наложение субтитров) 
+    position: relative;
+    /* Обеспечивает, что дочерние элементы (наложение субтитров)
        позиционируются относительно этого блока. */
     overflow: hidden;
 }
 
-/* 2. Контейнер наложения субтитров */
 #custom-subtitle-overlay {
     position: absolute;
-    bottom: 5%; /* Отступ от нижнего края видео */
+    top: 0;
     left: 0;
-    right: 0;
+    width: 100%;
+    height: 100%;
+
     text-align: center;
-    
+
     /* Базовый стиль текста */
-    color: white; 
-    font-size: 1.5rem; 
+    color: white;
+    font-size: 1.5rem;
     line-height: 1.2;
     padding: 0 10%;
-    /* Элемент растягивается на весь контейнер */
+
+    /* Flex-контейнер для прижимания текста вниз */
     display: flex;
     justify-content: center;
-
-    /* ИСПРАВЛЕНИЕ: Прижимает содержимое (текст) к нижнему краю контейнера */
-    align-items: flex-end;
-
-    /* Добавьте отступ снизу, чтобы текст не был в самом углу */
+    align-items: flex-end; /* Прижимает содержимое к нижнему краю */
     padding-bottom: 5vh;
 
-    /* Тень для читаемости на любом фоне (важно для видео) */
-    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.9); 
-    
-    /* Критически важно: позволяет кликам проходить на iframe YouTube. 
-       Без этого невозможно будет нажать на паузу/воспроизведение. */
-    pointer-events: none; 
-    z-index: 10; /* Обеспечивает, что контейнер будет поверх iframe */
+    /* Тень для читаемости на любом фоне */
+    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.9);
+
+    /* Позволяет кликам проходить на iframe YouTube. */
+    pointer-events: none;
+    z-index: 10;
 }
 
-/* 3. Стили для классов, которые вы используете в поле style_classes в админке */
-/* Классы должны быть префиксованы cue-, как мы настроили в JS */
+.subtitle-line-text {
+    /* ЭТО КЛЮЧЕВОЙ МОМЕНТ: занимает только ширину контента */
+    display: inline-block;
 
-.cue-bold {
+    background-color: rgba(44, 44, 44, 0.75);
+
+    padding: 4px 8px;
+
+    color: white;
+
+    border-radius: 4px;
+
+    text-shadow: 1px 1px 2px black;
+}
+
+.speaker {
+    font-style: italic;
+    color: #ffffff;
+}
+
+.bold {
     font-weight: bold;
 }
 
-.cue-italic {
+.italic {
     font-style: italic;
 }
 
 /* Пример стилизации для "крика" или важных реплик */
-.cue-loud {
+.loud {
     color: yellow;
-    background-color: rgba(150, 0, 0, 0.5); /* Полупрозрачный красный фон */
-    padding: 2px 4px;
-    border-radius: 3px;
 }
 
-/* Добавьте сюда другие стили, которые вы можете использовать в поле style_classes */
+.subtitle-line-text:has(.loud) {
+    /* Переопределяем фоновый цвет всей рамки на "громкий" фон */
+    background-color: rgba(10, 150, 0, 0.85); /* Новый фон для всего блока */
+}
+
+/* 5. Стиль для Select2 (сохранен из вашего кода) */
+.select2-container .select2-selection--single {
+    min-height: 2.5rem;
+}

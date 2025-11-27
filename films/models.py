@@ -120,53 +120,54 @@ class SubtitleSet(MyModel):
     def __str__(self):
         return f"{self.film.name} ({self.language})"
 
+    def format_time(self, seconds):
+        """Конвертирует секунды (float) в формат VTT (00:00:00.000)"""
+        if seconds is None:
+            return "00:00:00.000"
+
+        ms = int(seconds * 1000)
+        h = ms // 3600000
+        ms %= 3600000
+        m = ms // 60000
+        ms %= 60000
+        s = ms // 1000
+        ms %= 1000
+
+        return f"{h:02}:{m:02}:{s:02}.{ms:03}"
+
     def generate_vtt(self):
         """
-        Генерирует строку WebVTT из всех строк этого набора.
-
-        В этом методе реализуется основная функциональность новой архитектуры.
+        Генерирует полный VTT-файл из строк, хранящихся в базе.
         """
-        vtt_content = ["WEBVTT\n"]
+        vtt_lines = ["WEBVTT\n"]
 
-        # Загружаем строки субтитров, отсортированные по времени начала
-        # (вместо поля 'order', как обсуждалось)
-        lines = self.lines.all().order_by('start_time', 'end_time')
-
-        # Формат WebVTT требует времени в формате 00:00:00.000
-        def format_time(seconds):
-            # Переводим секунды в часы, минуты, секунды и миллисекунды
-            milli = int((seconds - int(seconds)) * 1000)
-            seconds = int(seconds)
-            h = seconds // 3600
-            m = (seconds % 3600) // 60
-            s = seconds % 60
-            return f"{h:02}:{m:02}:{s:02}.{milli:03}"
+        # Загружаем все строки, отсортированные по времени
+        lines = self.lines.all().order_by('start_time')
 
         for line in lines:
-            # 1. Заголовок (время)
-            start = format_time(line.start_time)
-            end = format_time(line.end_time)
+            # 1. Тайминги: 00:00:00.000 --> 00:00:00.000
+            start_time = self.format_time(line.start_time)
+            end_time = self.format_time(line.end_time)
+            vtt_lines.append(f"{start_time} --> {end_time}")
 
-            # Добавляем метку времени и классы стилей
-            time_cue = f"{start} --> {end}"
+            # 2. Текст с VTT-тегами:
+            text_parts = []
 
-            # Добавляем классы стилей, если они есть
+            # Добавляем имя говорящего, если есть (используем тег <c.speaker>)
+            if line.name:
+                text_parts.append(f"<c.speaker>{line.name}:</c>")
+
+            # Добавляем текст, обернутый в стиль, если есть
             if line.style_classes:
-                time_cue += f" {line.style_classes}"
+                # В SubtitleLine.style_classes должно быть имя класса (например, 'loud')
+                text_parts.append(f"<c.{line.style_classes}>{line.text}</c>")
+            else:
+                text_parts.append(line.text)
 
-            vtt_content.append(time_cue)
+            vtt_lines.append(" ".join(text_parts))
+            vtt_lines.append("\n") # Пустая строка для разделения блоков VTT
 
-            # 2. Текст субтитра
-            text_line = line.text
-
-            if getattr(line, 'name', None) and line.name.strip():
-                # Формат: <b>Имя:</b> Текст субтитра
-                text_line = f"<b>{line.name.strip()}:</b> {text_line}"
-
-            vtt_content.append(text_line)
-            vtt_content.append("") # Пустая строка для разделения меток
-
-        return "\n".join(vtt_content)
+        return "\n".join(vtt_lines)
 
 
 class SubtitleLine(MyModel):
