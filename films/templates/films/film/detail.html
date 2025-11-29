@@ -1,6 +1,8 @@
 {% extends 'films/base.html' %}
 {% load films_tags %}
-{% load static %}  {% block breadcrumb %}
+{% load static %}
+
+{% block breadcrumb %}
   <nav>
     <ol class="breadcrumb">
       <li class="breadcrumb-item">
@@ -12,6 +14,9 @@
 {% endblock %}
 
 {% block content %}
+
+  <link rel="stylesheet" href="{% static 'films/css/base.css' %}">
+
   <div class="row">
     <div class="col-md-3">
       {% if film.cover %}
@@ -119,12 +124,15 @@
 
             <script>
                 (function() {
-                    // ИСПРАВЛЕНИЕ: Убираем ручное добавление '/films/' +
-                    // Просто используем результат работы тега url
                     var vttUrl = "{% url 'films:get_subtitles' film_id=film.id language_code='ru' %}";
 
                     if (typeof initializeSubtitleSync !== 'undefined') {
-                        initializeSubtitleSync(vttUrl, 'youtube-player', 'custom-subtitle-overlay');
+                        // Передаем только 3 обязательных аргумента
+                        initializeSubtitleSync(
+                            vttUrl,
+                            'youtube-player',
+                            'custom-subtitle-overlay'
+                        );
                     }
                 })();
             </script>

@@ -1,5 +1,6 @@
 from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
+from django.db.models import JSONField
 import datetime
 
 
@@ -107,7 +108,7 @@ class SubtitleSet(MyModel):
         verbose_name='Фильм'
     )
     language = models.CharField(
-        max_length=10,
+        max_length=2,
         verbose_name='Язык субтитров',
         help_text='Например, "en", "ru"'
     )
@@ -120,24 +121,18 @@ class SubtitleSet(MyModel):
     def __str__(self):
         return f"{self.film.name} ({self.language})"
 
-    def format_time(self, seconds):
-        """Конвертирует секунды (float) в формат VTT (00:00:00.000)"""
-        if seconds is None:
-            return "00:00:00.000"
-
-        ms = int(seconds * 1000)
-        h = ms // 3600000
-        ms %= 3600000
-        m = ms // 60000
-        ms %= 60000
-        s = ms // 1000
-        ms %= 1000
-
-        return f"{h:02}:{m:02}:{s:02}.{ms:03}"
+    def format_time(self, milliseconds):
+        hours, remainder = divmod(milliseconds, 3600000)
+        minutes, remainder = divmod(remainder, 60000)
+        seconds, milliseconds = divmod(remainder, 1000)
+        if hours > 0:
+            return f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}.{int(milliseconds):03}"
+        return f"{int(minutes):02}:{int(seconds):02}.{int(milliseconds):03}"
 
     def generate_vtt(self):
         """
-        Генерирует полный VTT-файл из строк, хранящихся в базе.
+        Генерирует полный, ЧИСТЫЙ VTT-файл для видеоплеера.
+        Использует данные из style (JSONField), но не включает его в текст субтитра.
         """
         vtt_lines = ["WEBVTT\n"]
 
@@ -145,26 +140,36 @@ class SubtitleSet(MyModel):
         lines = self.lines.all().order_by('start_time')
 
         for line in lines:
-            # 1. Тайминги: 00:00:00.000 --> 00:00:00.000
-            start_time = self.format_time(line.start_time)
-            end_time = self.format_time(line.end_time)
-            vtt_lines.append(f"{start_time} --> {end_time}")
+            start_time = self.format_time(line.start_time * 1000) # Умножаем на 1000 для мс
+            end_time = self.format_time(line.end_time * 1000)   # Умножаем на 1000 для мс
 
-            # 2. Текст с VTT-тегами:
-            text_parts = []
+            style_data = line.style if line.style is not None else {}
 
-            # Добавляем имя говорящего, если есть (используем тег <c.speaker>)
-            if line.name:
-                text_parts.append(f"<c.speaker>{line.name}:</c>")
+            # 1. Формируем строку с таймингами
+            vtt_cue_line = f"{start_time} --> {end_time}"
 
-            # Добавляем текст, обернутый в стиль, если есть
-            if line.style_classes:
-                # В SubtitleLine.style_classes должно быть имя класса (например, 'loud')
-                text_parts.append(f"<c.{line.style_classes}>{line.text}</c>")
+            # 2. Извлечение имени спикера
+            speaker_name = style_data.get('name')
+            if speaker_name:
+                # Добавляем имя спикера в строку таймингов, как в VTT <v Имя>
+                vtt_cue_line += f" <v {speaker_name}>"
+
+            vtt_lines.append(vtt_cue_line) # <-- Заголовок метки
+
+            # 3. Собираем классы для отображения (VTT-стилизация)
+            custom_classes = style_data.get('classes', [])
+
+            # 4. Собираем финальный контент (ТОЛЬКО ЧИСТЫЙ ТЕКСТ и VTT-теги)
+            if custom_classes:
+                class_string = ".".join(custom_classes)
+                # Оборачиваем текст в тег <c.класс1.класс2>
+                text_content = f"<c.{class_string}>{line.text}</c>"
             else:
-                text_parts.append(line.text)
+                text_content = line.text
 
-            vtt_lines.append(" ".join(text_parts))
+            # 5. Добавляем чистый текст субтитра (БЕЗ ТЕГА <c.meta>)
+            vtt_lines.append(text_content.strip())
+
             vtt_lines.append("\n") # Пустая строка для разделения блоков VTT
 
         return "\n".join(vtt_lines)
@@ -180,10 +185,12 @@ class SubtitleLine(MyModel):
     )
     start_time = models.FloatField(
         verbose_name='Время начала (с)',
-        help_text='Время в секундах, с точностью до миллисекунд.'
+        help_text='Время в секундах, с точностью до миллисекунд.',
+        validators=[MinValueValidator(0.0)] # Добавим валидатор
     )
     end_time = models.FloatField(
-        verbose_name='Время окончания (с)'
+        verbose_name='Время окончания (с)',
+        validators=[MinValueValidator(0.0)] # Добавим валидатор
     )
     text = models.TextField(
         verbose_name='Текст субтитра'
@@ -193,12 +200,8 @@ class SubtitleLine(MyModel):
         verbose_name='Имя персонажа',
         null=True, blank=True
     )
-    style_classes = models.CharField( # Для всех стилей: bold italic loud-text
-        max_length=255,
-        verbose_name='Классы стилей',
-        help_text='Например: "bold italic red-text"',
-        null=True, blank=True
-    )
+
+    style = JSONField(null=True, blank=True)
 
     class Meta:
         verbose_name = 'Строка субтитра'

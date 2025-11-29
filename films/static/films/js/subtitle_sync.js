@@ -1,167 +1,230 @@
-// films/static/films/js/subtitle_sync.js
-
 /**
- * Инициализирует логику синхронизации кастомных субтитров с YouTube-плеером.
- * @param {string} vttUrl - URL для загрузки VTT-файла из Django (который генерируется из БД).
- * @param {string} playerIframeId - ID элемента iframe YouTube плеера ('youtube-player').
- * @param {string} overlayElementId - ID элемента-контейнера для отображения субтитров ('custom-subtitle-overlay').
+ * Инициализирует синхронизацию субтитров с YouTube-плеером.
+ * * @param {string} vttUrl URL для VTT-файла, который отдает Django (views.get_subtitles).
+ * @param {string} playerId ID HTML-элемента iframe (YouTube-плеер).
+ * @param {string} overlayId ID HTML-элемента для отображения субтитров.
+ * @param {Object} speakerStyles Объект, содержащий стили для спикеров:
+ * { "SpeakerName": { "color": "...", "class": "css-class" }, ... }
  */
-function initializeSubtitleSync(vttUrl, playerIframeId, overlayElementId) {
+function initializeSubtitleSync(vttUrl, playerId, overlayId, speakerStyles) {
+    const overlay = document.getElementById(overlayId);
+    let subtitles = [];
+    let youtubePlayer;
+    let subtitleInterval;
+    let isVttLoaded = false;
 
-    var player;
-    var subtitles = [];
-    var subtitleOverlay = document.getElementById(overlayElementId);
-    var currentCueIndex = -1;
-    var updateInterval;
+    // Регулярное выражение для парсинга тега спикера VTT: <v SpeakerName>
+    const speakerTagRegex = /^<v\s*([^>]+)>/;
+    // Регулярное выражение для парсинга тега стилей VTT: <c.className>
+    const styleTagRegex = /<c\.([^>]+)>/g;
 
-    // ------------------- Вспомогательные функции --------------------
-
-    /**
-     * Конвертация VTT времени (00:00:00.000) в секунды (float).
-     */
-    function timeToSeconds(timeStr) {
-        var parts = timeStr.split(/[:,.]/);
-        var seconds = 0;
-        if (parts.length === 4) {
-            seconds += parseInt(parts[0]) * 3600; // Часы
-            seconds += parseInt(parts[1]) * 60;   // Минуты
-            seconds += parseInt(parts[2]);        // Секунды
-            seconds += parseInt(parts[3]) / 1000; // Миллисекунды
-        }
-        return seconds;
-    }
+    // --- 1. ЗАГРУЗКА И ПАРСИНГ VTT ---
 
     /**
-     * Парсит VTT данные с помощью RegExp (синхронно).
-     * Работает надежнее, чем нативный парсер, если VTT-формат не идеален.
+     * Парсит VTT-файл (текст) в массив объектов субтитров.
+     * @param {string} vttText Содержимое VTT-файла.
      */
-    function parseVTT(vttData) {
-        var lines = vttData.split('\n');
-        var cues = [];
-        // Простой и надежный RegEx для таймингов
-        var timingRegex = /(\d{2}:\d{2}:\d{2}\.\d{3})\s+-->\s+(\d{2}:\d{2}:\d{2}\.\d{3})\s*(.*)/;
+    function parseVTT(vttText) {
+        const cues = [];
+        // Разделяем VTT по строкам, игнорируя заголовок WEBVTT
+        const lines = vttText.split('\n');
 
-        for (var i = 1; i < lines.length; i++) {
-            var timingMatch = lines[i].match(timingRegex);
+        let i = 0;
+        while (i < lines.length) {
+            // Ищем строку с временными метками
+            if (lines[i].includes('-->')) {
+                const timeLine = lines[i].trim();
+                const [startStr, endStr] = timeLine.split('-->').map(s => s.trim());
 
-            if (timingMatch) {
-                var startTime = timeToSeconds(timingMatch[1]);
-                var endTime = timeToSeconds(timingMatch[2]);
-                var classes = timingMatch[3].trim();
-                var textLine = lines[i + 1] || '';
+                // Парсинг времени в секунды
+                const startSec = parseTime(startStr);
+                const endSec = parseTime(endStr);
 
-                // Пропускаем строки до следующего блока
-                while (lines[i] !== undefined && lines[i].trim() !== '' && !lines[i].includes('-->')) {
-                    i++;
+                // Следующая строка - текст субтитра
+                let text = lines[++i] ? lines[i].trim() : '';
+
+                // Объединяем многострочные субтитры (если есть пустые строки)
+                while (lines[++i] && lines[i].trim() !== '') {
+                    text += '\n' + lines[i].trim();
                 }
 
-                cues.push({
-                    start: startTime,
-                    end: endTime,
-                    // Текст с VTT-тегами (<c.speaker> и т.д.)
-                    text: textLine.trim(),
-                    classes: classes
-                });
+                if (!isNaN(startSec) && !isNaN(endSec)) {
+                    cues.push({
+                        start: startSec,
+                        end: endSec,
+                        text: text
+                    });
+                }
             }
+            i++;
         }
-        console.log("LOG: Синхронный парсер завершен. Найдено строк:", cues.length); // ЛОГ
         return cues;
     }
 
     /**
-     * Форматирует текст VTT-тегов в HTML и оборачивает для фона.
+     * Конвертирует строку времени VTT (00:00:00.000) в секунды.
      */
-    function formatTextForOverlay(rawText) {
-        if (!rawText) return '';
-
-        var htmlText = rawText;
-
-        // 1. Обработка тегов <c.class> -> <span class="class">
-        htmlText = htmlText.replace(/<c\.([^>]+)>/g, function(match, classNames) {
-        // Теперь classNames определен и содержит список классов, разделенных пробелами.
-            return '<span class="' + classNames.trim() + '">';
-        });
-
-        htmlText = htmlText.replace(/<\/c>/g, '</span>');
-
-        // 2. Обертываем весь результат в контейнер для стилизации фона (display: inline-block)
-        return `<span class="subtitle-line-text">${htmlText}</span>`;
+    function parseTime(timeStr) {
+        const parts = timeStr.split(':');
+        let seconds = 0;
+        if (parts.length === 3) {
+            seconds += parseFloat(parts[0]) * 3600; // Часы
+            seconds += parseFloat(parts[1]) * 60;   // Минуты
+            seconds += parseFloat(parts[2]);        // Секунды (включая миллисекунды)
+        } else if (parts.length === 2) {
+            seconds += parseFloat(parts[0]) * 60;   // Минуты
+            seconds += parseFloat(parts[1]);        // Секунды
+        }
+        return seconds;
     }
 
-    // ------------------- Логика плеера и синхронизации --------------------
+    // Запрос VTT-файла
+    fetch(vttUrl)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            return response.text();
+        })
+        .then(vttText => {
+            subtitles = parseVTT(vttText);
+            isVttLoaded = true;
+            console.log(`[SubtitleSync] VTT loaded and parsed. Total cues: ${subtitles.length}`);
+        })
+        .catch(error => {
+            console.error('[SubtitleSync] Error loading VTT:', error);
+            overlay.innerHTML = '<span class="subtitle-line" style="color: red;">Ошибка загрузки субтитров.</span>';
+        });
 
-    // Вызывается YouTube API, когда оно загружено
+    // --- 2. СИНХРОНИЗАЦИЯ С ПЛЕЕРОМ (API YouTube) ---
+
+    // Функция, которая вызывается, когда YouTube Iframe API загружен
     window.onYouTubeIframeAPIReady = function() {
-        var currentOrigin = window.location.protocol + '//' + window.location.host;
-
-        player = new YT.Player(playerIframeId, {
-            playerVars: {
-                'autoplay': 0,
-                'controls': 1,
-                'enablejsapi': 1,
-                'origin': currentOrigin
-            },
+        youtubePlayer = new YT.Player(playerId, {
             events: {
+                'onReady': onPlayerReady,
                 'onStateChange': onPlayerStateChange
             }
         });
+    }
 
-        // 2. Асинхронная загрузка VTT-данных (получение текста)
-        fetch(vttUrl)
-            .then(response => {
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                return response.text();
-            })
-            .then(vttData => {
-                console.log("LOG: VTT текст успешно получен. Размер:", vttData.length); // ЛОГ
-                // Синхронный парсинг текста
-                subtitles = parseVTT(vttData);
-            })
-            .catch(error => console.error('Ошибка загрузки или парсинга субтитров:', error));
+    function onPlayerReady(event) {
+        // Устанавливаем интервал проверки только после готовности плеера
+        if (isVttLoaded) {
+             startSubtitleCheck();
+        }
     }
 
     function onPlayerStateChange(event) {
         if (event.data === YT.PlayerState.PLAYING) {
-            console.log("LOG: Плеер начал воспроизведение. Запуск интервала."); // ЛОГ
-            updateInterval = setInterval(updateSubtitle, 50);
+            startSubtitleCheck();
         } else {
-            clearInterval(updateInterval);
+            stopSubtitleCheck();
         }
     }
 
-    function updateSubtitle() {
-        var currentTime = player.getCurrentTime();
-        var foundCue = false;
+    function startSubtitleCheck() {
+        if (!subtitleInterval) {
+            subtitleInterval = setInterval(checkSubtitle, 100); // Проверка каждые 100 мс
+        }
+    }
 
-        for (var i = 0; i < subtitles.length; i++) {
-            var cue = subtitles[i];
+    function stopSubtitleCheck() {
+        clearInterval(subtitleInterval);
+        subtitleInterval = null;
+    }
 
+    // --- 3. ЛОГИКА ОТОБРАЖЕНИЯ И СТИЛИЗАЦИИ ---
+
+    /**
+     * Проверяет, какой субтитр должен находится в данный момент времени
+     */
+    function checkSubtitle() {
+        if (!youtubePlayer || !isVttLoaded || typeof youtubePlayer.getCurrentTime !== 'function') {
+            return;
+        }
+
+        const currentTime = youtubePlayer.getCurrentTime();
+        let currentCue = null;
+
+        // Находим активный субтитр
+        for (const cue of subtitles) {
             if (currentTime >= cue.start && currentTime < cue.end) {
-                if (i !== currentCueIndex) {
-                    currentCueIndex = i;
-
-                    console.log(`LOG: Отображение субтитра #${i}. Время: ${currentTime.toFixed(2)}`); // ЛОГ
-                    subtitleOverlay.innerHTML = formatTextForOverlay(cue.text);
-
-                    subtitleOverlay.className = '';
-                }
-                foundCue = true;
+                currentCue = cue;
                 break;
             }
         }
 
-        if (!foundCue && currentCueIndex !== -1) {
-            currentCueIndex = -1;
-            subtitleOverlay.textContent = '';
-            subtitleOverlay.className = '';
+        if (currentCue) {
+            displaySubtitle(currentCue);
+        } else {
+            hideSubtitle();
         }
     }
 
-    // Загрузка YouTube Iframe API
-    var tag = document.createElement('script');
-    tag.src = "https://www.youtube.com/iframe_api";
-    var firstScriptTag = document.getElementsByTagName('script')[0];
-    firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+    /**
+     * Обрабатывает и отображает субтитр, применяя стили спикеров.
+     * @param {Object} cue Объект субтитра { start, end, text }.
+     */
+    function displaySubtitle(cue) {
+        // Регулярные выражения (предположим, они определены глобально, как и должно быть)
+        // const speakerTagRegex = /<v\s+([^>]+)>/;
+        // const styleTagRegex = /<c\.([^>]+)>/g;
+
+        // Ищем имя спикера: <v SpeakerName>
+        const speakerMatch = cue.text.match(speakerTagRegex);
+        let speakerName = null;
+        let cleanedText = cue.text; // Текст без тегов VTT
+
+        // 1. Создаем массив классов, начиная с БАЗОВОГО класса
+        // Используем класс "subtitle-line-text", который СТИЛИЗОВАН в CSS
+        const classList = ['subtitle-line-text'];
+
+        // Элемент, который будет содержать имя спикера
+        let speakerElement = '';
+
+        if (speakerMatch) {
+            speakerName = speakerMatch[1].trim();
+            // Убираем тег спикера из текста, который будет отображаться
+            cleanedText = cleanedText.replace(speakerTagRegex, '').trim();
+
+            // 2. Находим CSS-класс для этого спикера (если нужно)
+            if (speakerName in speakerStyles && speakerStyles[speakerName].class) {
+                classList.push(speakerStyles[speakerName].class);
+            }
+
+            // Формируем HTML для имени спикера, используя класс .speaker
+            speakerElement = `<span class="speaker">${speakerName}:</span> `;
+        }
+
+        // 3. Обрабатываем тег стилей VTT: <c.className>
+        let styledText = cleanedText;
+        let additionalStyleClasses = '';
+
+        // VTT-теги вложенности (<b>, <i>) обрабатываем вторым этапом
+        // Здесь мы ищем VTT-классы (например, <c.bold> или <c.loud>)
+        styledText = styledText.replace(styleTagRegex, (match, className) => {
+             // Классы из VTT (например, 'loud', 'bold') добавляются к общим классам контейнера
+             classList.push(className);
+             // Удаляем тег VTT из отображаемого текста
+             return '';
+        });
+
+        // VTT-теги закрытия (</c>) просто удаляем
+        styledText = styledText.replace(/<\/c>/g, '');
+
+        // 4. Генерируем финальную строку классов
+        const finalClasses = classList.filter(c => c).join(' ');
+
+        // Создаем HTML-элемент для отображения
+        // Теперь используется:
+        // 1. Правильный класс CSS: subtitle-line-text
+        // 2. Чистая строка классов (без лишних пробелов)
+        // 3. Имя спикера в отдельном <span>
+        overlay.innerHTML = `<span class="${finalClasses}">${speakerElement}${styledText}</span>`;
+    }
+
+    function hideSubtitle() {
+        overlay.innerHTML = '';
+    }
 }
