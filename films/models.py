@@ -113,6 +113,13 @@ class SubtitleSet(MyModel):
         help_text='Например, "en", "ru"'
     )
 
+    speaker_color_map = models.JSONField(
+        default=dict,
+        blank=True,
+        verbose_name='Карта цветов персонажей',
+        help_text='JSON: {"Имя Персонажа": "#HEX_ЦВЕТ", "Другое Имя": "#HEX_ЦВЕТ", ...}'
+    )
+
     class Meta:
         verbose_name = 'Набор субтитров'
         verbose_name_plural = 'Наборы субтитров'
@@ -132,7 +139,8 @@ class SubtitleSet(MyModel):
     def generate_vtt(self):
         """
         Генерирует полный, ЧИСТЫЙ VTT-файл для видеоплеера.
-        Использует данные из style (JSONField), но не включает его в текст субтитра.
+        Использует только стандартный тег <v Name> для спикера.
+        Использует тег <c.класс> только для стилизации текста.
         """
         vtt_lines = ["WEBVTT\n"]
 
@@ -140,19 +148,20 @@ class SubtitleSet(MyModel):
         lines = self.lines.all().order_by('start_time')
 
         for line in lines:
-            start_time = self.format_time(line.start_time * 1000) # Умножаем на 1000 для мс
-            end_time = self.format_time(line.end_time * 1000)   # Умножаем на 1000 для мс
+            # Преобразование секунд в миллисекунды для format_time
+            start_time = self.format_time(line.start_time * 1000)
+            end_time = self.format_time(line.end_time * 1000)
 
             style_data = line.style if line.style is not None else {}
 
             # 1. Формируем строку с таймингами
             vtt_cue_line = f"{start_time} --> {end_time}"
 
-            # 2. Извлечение имени спикера
-            speaker_name = style_data.get('name')
+            # 2. Извлечение имени спикера (используем 'speaker' вместо 'name')
+            speaker_name = style_data.get('speaker')
             if speaker_name:
                 # Добавляем имя спикера в строку таймингов, как в VTT <v Имя>
-                vtt_cue_line += f" <v {speaker_name}>"
+                vtt_cue_line += f" <v {speaker_name}>" # Используем <v>
 
             vtt_lines.append(vtt_cue_line) # <-- Заголовок метки
 
@@ -160,6 +169,7 @@ class SubtitleSet(MyModel):
             custom_classes = style_data.get('classes', [])
 
             # 4. Собираем финальный контент (ТОЛЬКО ЧИСТЫЙ ТЕКСТ и VTT-теги)
+            # Если есть общие классы (например, 'loud'), оборачиваем текст.
             if custom_classes:
                 class_string = ".".join(custom_classes)
                 # Оборачиваем текст в тег <c.класс1.класс2>
@@ -167,7 +177,7 @@ class SubtitleSet(MyModel):
             else:
                 text_content = line.text
 
-            # 5. Добавляем чистый текст субтитра (БЕЗ ТЕГА <c.meta>)
+            # 5. Добавляем чистый текст субтитра
             vtt_lines.append(text_content.strip())
 
             vtt_lines.append("\n") # Пустая строка для разделения блоков VTT
@@ -212,3 +222,13 @@ class SubtitleLine(MyModel):
 
     def __str__(self):
         return f"[{self.start_time:.2f}] {self.text[:40]}..."
+
+    def save(self, *args, **kwargs):
+        if self.name:
+            if self.style is None:
+                self.style = {}
+            self.style['speaker'] = self.name
+        elif self.style and 'speaker' in self.style:
+            # Если поле name очищено, удаляем его из JSON
+            del self.style['speaker']
+        super().save(*args, **kwargs)

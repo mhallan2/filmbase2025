@@ -6,6 +6,7 @@ from .forms import CountryForm, GenreForm, FilmForm, PersonForm
 from .helpers import paginate
 from django.contrib import messages
 from django.http import HttpResponse, Http404
+import json
 
 
 def check_admin(user):
@@ -132,8 +133,28 @@ def film_detail(request, id):
     queryset = Film.objects.prefetch_related("country", "genres", "director",
                                              "people")
     film = get_object_or_404(queryset, id=id)
+    speaker_color_map = {}
+    target_set = None
+
+    try:
+        # 1. Сначала, пробуем получить русский набор (приоритет)
+        target_set = film.subtitle_sets.get(language__iexact='ru')
+    except SubtitleSet.DoesNotExist:
+        try:
+            # 2. Если русского нет, пробуем получить любой первый попавшийся набор
+            target_set = film.subtitle_sets.first()
+        except Exception:
+            # Ничего не найдено
+            pass
+
+    if target_set:
+        speaker_color_map = target_set.speaker_color_map
+
+    speaker_color_map_json = json.dumps(speaker_color_map)
+
     return render(request, 'films/film/detail.html',
-                  {'film': film})
+                  {'film': film,
+                   'speaker_color_map': speaker_color_map_json})
 
 
 @user_passes_test(check_admin)
