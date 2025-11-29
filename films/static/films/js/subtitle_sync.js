@@ -167,10 +167,6 @@ function initializeSubtitleSync(vttUrl, playerId, overlayId, speakerStyles) {
      * @param {Object} cue Объект субтитра { start, end, text }.
      */
     function displaySubtitle(cue) {
-        // Регулярные выражения (предположим, они определены глобально, как и должно быть)
-        // const speakerTagRegex = /<v\s+([^>]+)>/;
-        // const styleTagRegex = /<c\.([^>]+)>/g;
-
         // Ищем имя спикера: <v SpeakerName>
         const speakerMatch = cue.text.match(speakerTagRegex);
         let speakerName = null;
@@ -199,13 +195,19 @@ function initializeSubtitleSync(vttUrl, playerId, overlayId, speakerStyles) {
 
         // 3. Обрабатываем тег стилей VTT: <c.className>
         let styledText = cleanedText;
-        let additionalStyleClasses = '';
 
-        // VTT-теги вложенности (<b>, <i>) обрабатываем вторым этапом
         // Здесь мы ищем VTT-классы (например, <c.bold> или <c.loud>)
-        styledText = styledText.replace(styleTagRegex, (match, className) => {
-             // Классы из VTT (например, 'loud', 'bold') добавляются к общим классам контейнера
-             classList.push(className);
+        // ИСПРАВЛЕНИЕ: Разбиваем classNamesString по точке, чтобы разделить "calm.italic"
+        styledText = styledText.replace(styleTagRegex, (match, classNamesString) => {
+             // Разделяем строку по точке и убираем пустые элементы
+             const individualClasses = classNamesString.split('.').filter(c => c.trim() !== '');
+
+             individualClasses.forEach(c => {
+                 // Добавляем каждый класс в список, если он еще не добавлен
+                 if (c && !classList.includes(c)) {
+                     classList.push(c);
+                 }
+             });
              // Удаляем тег VTT из отображаемого текста
              return '';
         });
@@ -217,10 +219,7 @@ function initializeSubtitleSync(vttUrl, playerId, overlayId, speakerStyles) {
         const finalClasses = classList.filter(c => c).join(' ');
 
         // Создаем HTML-элемент для отображения
-        // Теперь используется:
-        // 1. Правильный класс CSS: subtitle-line-text
-        // 2. Чистая строка классов (без лишних пробелов)
-        // 3. Имя спикера в отдельном <span>
+        // Используем styledText, который теперь чист от VTT-тегов
         overlay.innerHTML = `<span class="${finalClasses}">${speakerElement}${styledText}</span>`;
     }
 
