@@ -1,3 +1,10 @@
+// ГЛОБАЛЬНОЕ СОСТОЯНИЕ (для управления интервалом и плеером при переключении)
+// Используем объект window для сохранения состояния между вызовами функции.
+window.subtitleSyncState = window.subtitleSyncState || {
+    player: null,
+    intervalId: null
+};
+
 /**
  * Инициализирует синхронизацию субтитров с YouTube-плеером.
  * @param {string} vttUrl URL для VTT-файла.
@@ -6,16 +13,24 @@
  * @param {Object} speakerStyles Объект стилей: { "Имя": "#HEX", ... }
  */
 function initializeSubtitleSync(vttUrl, playerId, overlayId, speakerStyles) {
+    const state = window.subtitleSyncState; // Получаем текущее состояние
     const overlay = document.getElementById(overlayId);
     let subtitles = [];
-    let youtubePlayer;
-    let subtitleInterval;
     let isVttLoaded = false;
 
     // Регулярное выражение для поиска тега спикера VTT: <v SpeakerName>
     const speakerTagRegex = /<v\s*([^>]+)>/;
     // Регулярное выражение для парсинга тега стилей VTT: <c.className>
     const styleTagRegex = /<c\.([^>]+)>/g;
+
+    // --- КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: ОЧИСТКА ПРЕДЫДУЩЕГО СОСТОЯНИЯ ---
+    if (state.intervalId) {
+        clearInterval(state.intervalId);
+        state.intervalId = null;
+        console.log('[SubtitleSync] Old interval cleared for language switch.');
+    }
+    overlay.innerHTML = ''; // Очищаем субтитры на оверлее
+    // -----------------------------------------------------------------
 
     // --- 1. ЗАГРУЗКА И ПАРСИНГ VTT ---
 
@@ -24,17 +39,14 @@ function initializeSubtitleSync(vttUrl, playerId, overlayId, speakerStyles) {
      */
     function parseTime(timeStr) {
         if (!timeStr) return 0;
-        // Заменяем запятую на точку (для совместимости) и разбиваем
         const parts = timeStr.replace(',', '.').split(':');
         let seconds = 0;
 
         if (parts.length === 3) {
-            // HH:MM:SS.mmm
             seconds += parseFloat(parts[0]) * 3600;
             seconds += parseFloat(parts[1]) * 60;
             seconds += parseFloat(parts[2]);
         } else if (parts.length === 2) {
-            // MM:SS.mmm
             seconds += parseFloat(parts[0]) * 60;
             seconds += parseFloat(parts[1]);
         }
@@ -42,15 +54,13 @@ function initializeSubtitleSync(vttUrl, playerId, overlayId, speakerStyles) {
     }
 
     /**
-     * Парсит VTT-файл.
+     * Парсит VTT-файл. (Логика из вашего исходного кода, включая очистку имени спикера)
      */
-function parseVTT(vttText) {
+    function parseVTT(vttText) {
         const cues = [];
-        // Используем надежный разделитель, чтобы учесть \r\n (Windows) и \n (Linux/Unix)
         const lines = vttText.split(/\r?\n/).map(line => line.trim());
 
         let i = 0;
-        // Пропускаем заголовок 'WEBVTT' и пустые строки
         while (i < lines.length && !lines[i].includes('-->')) {
             i++;
         }
@@ -58,39 +68,27 @@ function parseVTT(vttText) {
         while (i < lines.length) {
             if (lines[i].includes('-->')) {
                 let timeLine = lines[i].trim();
-
-                // 1. Извлечение имени спикера из строки тайминга
                 let speakerName = null;
-                // speakerTagRegex = /<v\s*([^>]+)>/;
                 const vTagMatch = timeLine.match(speakerTagRegex);
 
                 if (vTagMatch) {
-                    // Группа 1 (vTagMatch[1]) содержит имя спикера.
                     speakerName = vTagMatch[1].trim();
-
-                    // 2. ОЧИЩАЕМ строку тайминга от тега спикера
                     timeLine = timeLine.replace(speakerTagRegex, '').trim();
 
-                    // 🚨 КОНТРОЛЬНЫЙ ЛОГ: Имя должно выводиться здесь
-                    // Теперь мы можем заменить ваш старый лог 'Первый спикер: null'
                     if (cues.length === 0) {
                         console.log("PARSED FIRST SPEAKER:", speakerName);
                     }
                 }
 
-                // 3. Разбиваем по стрелке
                 const timeParts = timeLine.split('-->');
 
                 if (timeParts.length === 2) {
                     const startSec = parseTime(timeParts[0].trim());
-                    // Вторая часть: берем только время (отбрасывая возможные настройки VTT)
                     const endSec = parseTime(timeParts[1].trim().split(' ')[0]);
 
-                    // 4. Текст субтитра
                     i++;
                     let text = lines[i] ? lines[i].trim() : '';
 
-                    // Объединяем многострочные субтитры (ищем пустую строку)
                     while (lines[i + 1] && lines[i + 1].trim() !== '') {
                         i++;
                         text += ' ' + lines[i].trim();
@@ -109,9 +107,7 @@ function parseVTT(vttText) {
             i++;
         }
 
-        // 🚨 КОНТРОЛЬНЫЙ ЛОГ: Проверяем общее количество загруженных субтитров
         console.log(`[SubtitleSync] Загружено субтитров: ${cues.length}`);
-
         return cues;
     }
 
@@ -126,31 +122,47 @@ function parseVTT(vttText) {
         .then(vttText => {
             subtitles = parseVTT(vttText);
             isVttLoaded = true;
-            console.log(`[SubtitleSync] Загружено субтитров: ${subtitles.length}`);
-            // Проверка: выводим первого спикера в консоль
-            if(subtitles.length > 0) console.log("Первый спикер:", subtitles[0].speaker);
+            // После загрузки VTT, если плеер уже играет, сразу начинаем синхронизацию
+            if (state.player && state.player.getPlayerState() === YT.PlayerState.PLAYING) {
+                 startSubtitleCheck();
+            } else if (state.player) {
+                // Если плеер на паузе или остановлен, проверяем текущее время
+                checkSubtitle();
+            }
         })
         .catch(error => {
             console.error('[SubtitleSync] Ошибка загрузки:', error);
             overlay.innerHTML = '<span class="subtitle-line-text" style="color: red;">Ошибка загрузки субтитров.</span>';
         });
 
-    // --- 2. СИНХРОНИЗАЦИЯ С ПЛЕЕРОМ ---
+    // --- 2. СИНХРОНИЗАЦИЯ С ПЛЕЕРОМ (Инициализация только один раз) ---
 
-    window.onYouTubeIframeAPIReady = function() {
-        youtubePlayer = new YT.Player(playerId, {
-            events: {
-                'onReady': onPlayerReady,
-                'onStateChange': onPlayerStateChange
-            }
-        });
+    // Если плеер еще не инициализирован, создаем его (это произойдет только при первой загрузке страницы)
+    if (!state.player) {
+        // Определяем глобальный колбэк, который YouTube API вызывает после загрузки
+        window.onYouTubeIframeAPIReady = function() {
+            state.player = new YT.Player(playerId, {
+                events: {
+                    'onReady': onPlayerReady,
+                    'onStateChange': onPlayerStateChange
+                }
+            });
+        }
+        // Если API уже загрузился до того, как был определен window.onYouTubeIframeAPIReady,
+        // вызываем его вручную (простая проверка на случай, если скрипт загрузился быстро)
+        if (typeof YT !== 'undefined' && typeof YT.Player === 'function' && !state.player) {
+             window.onYouTubeIframeAPIReady();
+        }
     }
 
+
     function onPlayerReady(event) {
+        // Вызывается только один раз при создании плеера.
         if (isVttLoaded) startSubtitleCheck();
     }
 
     function onPlayerStateChange(event) {
+        // Управляет интервалом, используя *текущее* состояние субтитров.
         if (event.data === YT.PlayerState.PLAYING) {
             startSubtitleCheck();
         } else {
@@ -159,23 +171,26 @@ function parseVTT(vttText) {
     }
 
     function startSubtitleCheck() {
-        if (!subtitleInterval) {
-            subtitleInterval = setInterval(checkSubtitle, 100);
+        if (!state.intervalId) {
+            // Сохраняем ID нового интервала в глобальном состоянии
+            state.intervalId = setInterval(checkSubtitle, 100);
         }
     }
 
     function stopSubtitleCheck() {
-        clearInterval(subtitleInterval);
-        subtitleInterval = null;
+        clearInterval(state.intervalId);
+        state.intervalId = null;
     }
 
     // --- 3. ОТОБРАЖЕНИЕ ---
 
     function checkSubtitle() {
-        if (!youtubePlayer || !isVttLoaded || typeof youtubePlayer.getCurrentTime !== 'function') {
+        // Проверяем наличие плеера и загруженных VTT
+        if (!state.player || !isVttLoaded || typeof state.player.getCurrentTime !== 'function') {
             return;
         }
-        const currentTime = youtubePlayer.getCurrentTime();
+
+        const currentTime = state.player.getCurrentTime();
         const currentCue = subtitles.find(cue => currentTime >= cue.start && currentTime < cue.end);
 
         if (currentCue) {
@@ -185,48 +200,46 @@ function parseVTT(vttText) {
         }
     }
 
-function displaySubtitle(cue) {
-    const speakerNameRaw = cue.speaker; // Имя, как пришло из VTT
-    let styledText = cue.text;
-    const classList = ['subtitle-line-text'];
-    let speakerElement = '';
-    let dynamicStyleString = '';
+    function displaySubtitle(cue) {
+        const speakerNameRaw = cue.speaker;
+        let styledText = cue.text;
+        const classList = ['subtitle-line-text'];
+        let speakerElement = '';
+        let dynamicStyleString = '';
 
-    // 1. Обработка ИМЕНИ
-    if (speakerNameRaw) {
-        // 🛑 ИСПРАВЛЕНИЕ #1: Очищаем имя от пробелов, чтобы оно точно совпало
-        // с ключом в speakerStyles (который был введен без пробелов в админке)
-        const speakerName = speakerNameRaw.trim();
+        // 1. Обработка ИМЕНИ
+        if (speakerNameRaw) {
+            // ✅ ИСПРАВЛЕНИЕ: Очищаем имя от пробелов, чтобы оно точно совпало с ключом
+            const speakerName = speakerNameRaw.trim();
 
-        // 🛑 ИСПРАВЛЕНИЕ #2: Создаем элемент спикера с очищенным именем
-        speakerElement = `<span class=\"speaker\">${speakerName}:</span> `;
+            speakerElement = `<span class="speaker">${speakerName}:</span> `;
 
-        // Ищем цвет в переданном объекте speakerStyles по очищенному имени
-        const color = speakerStyles[speakerName];
+            // Ищем цвет в переданном объекте speakerStyles по очищенному имени
+            const color = speakerStyles[speakerName];
 
-        if (color) {
-            // Применяем inline-стиль к обертке
-            dynamicStyleString = `color: ${color};`;
+            if (color) {
+                dynamicStyleString = `color: ${color};`;
+            }
         }
+
+        // 2. Обработка КЛАССОВ (<c.loud>)
+        styledText = styledText.replace(styleTagRegex, (match, classNamesString) => {
+             // ... ваш код для обработки классов остается без изменений ...
+             const individualClasses = classNamesString.split('.').filter(c => c.trim() !== '');
+             individualClasses.forEach(c => {
+                 if (c && !classList.includes(c)) classList.push(c);
+             });
+             return '';
+        });
+        styledText = styledText.replace(/<\/c>/g, '');
+
+        // 3. Генерация HTML
+        const finalClasses = classList.join(' ');
+        // Вставляем speakerElement (имя со стилем)
+        overlay.innerHTML = `<span class="${finalClasses}" style="${dynamicStyleString}">`
+                            + `${speakerElement}${styledText}`
+                            + `</span>`;
     }
-
-    // 2. Обработка КЛАССОВ (<c.loud>) - Оставляем как есть
-    styledText = styledText.replace(styleTagRegex, (match, classNamesString) => {
-         const individualClasses = classNamesString.split('.').filter(c => c.trim() !== '');
-         individualClasses.forEach(c => {
-             if (c && !classList.includes(c)) classList.push(c);
-         });
-         return '';
-    });
-    styledText = styledText.replace(/<\/c>/g, '');
-
-    // 3. Генерация HTML
-    const finalClasses = classList.join(' ');
-    // Вставляем speakerElement (имя со стилем), если оно было найдено
-    overlay.innerHTML = `<span class=\"${finalClasses}\" style=\"${dynamicStyleString}\">`
-                        + `${speakerElement}${styledText}`
-                        + `</span>`;
-}
 
     function hideSubtitle() {
         overlay.innerHTML = '';

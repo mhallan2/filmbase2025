@@ -128,38 +128,6 @@ def film_list(request):
     return render(request, 'films/film/list.html', {'films': films,
                                                     'query': query})
 
-
-def film_detail(request, id):
-    queryset = Film.objects.prefetch_related("country", "genres", "director",
-                                             "people")
-    film = get_object_or_404(queryset, id=id)
-    speaker_color_map = {}
-    target_set = None
-    target_lang = 'fr' # Добавим, чтобы избежать ошибки Reverse, если не найдено
-
-    try:
-        # 1. Сначала, пробуем получить русский набор (приоритет)
-        target_set = film.subtitle_sets.get(language__iexact='ru')
-    except SubtitleSet.DoesNotExist:
-        try:
-            # 2. Если русского нет, пробуем получить любой первый попавшийся набор
-            target_set = film.subtitle_sets.first()
-        except Exception:
-            pass
-
-    if target_set:
-        speaker_color_map = target_set.speaker_color_map
-        target_lang = target_set.language # Сохраняем найденный язык
-
-    # 🛑 УДАЛИТЬ: Не используем json.dumps()
-    # speaker_color_map_json = json.dumps(speaker_color_map)
-
-    return render(request, 'films/film/detail.html',
-                  {'film': film,
-                   'speaker_color_map': speaker_color_map, # ✅ Передаем Python-словарь
-                   'target_lang': target_lang}) # ✅ Передаем язык для URL
-
-
 @user_passes_test(check_admin)
 def film_create(request):
     if request.method == 'POST':
@@ -269,6 +237,43 @@ class CountryAutocomplete(autocomplete.Select2QuerySetView):
         if self.q:
             countries = countries.filter(name__istartswith=self.q)
         return countries
+
+def film_detail(request, id):
+    # Добавляем prefetch для subtitle_sets для оптимизации
+    queryset = Film.objects.prefetch_related("country", "genres", "director",
+                                             "people", "subtitle_sets")
+    film = get_object_or_404(queryset, id=id)
+
+    # 1. Получаем ВСЕ наборы субтитров
+    # (Обратите внимание: .order_by('language') для предсказуемого порядка)
+    subtitle_sets = film.subtitle_sets.all().order_by('language')
+
+    # 2. Инициализация структур данных
+    available_languages = []
+    # Словарь для хранения всех карт цветов: {'ru': {...}, 'fr': {...}}
+    all_speaker_color_maps = {}
+    default_lang = 'none' # Заглушка, если субтитров нет
+
+    for sset in subtitle_sets:
+        lang = sset.language
+        available_languages.append(lang)
+        all_speaker_color_maps[lang] = sset.speaker_color_map
+
+        # Логика выбора языка по умолчанию: русский, затем первый найденный
+        if lang.lower() == 'ru':
+            default_lang = lang
+            # Если нашли русский, можем остановиться, он будет приоритетным
+            # Но мы продолжаем, чтобы собрать все карты цветов
+        elif default_lang == 'none':
+            # Если русский еще не выбран, берем первый из списка
+            default_lang = lang
+
+    return render(request, 'films/film/detail.html',
+                  {'film': film,
+                   'available_languages': available_languages, # Список для выпадающего меню
+                   'all_speaker_color_maps': all_speaker_color_maps, # Полная карта цветов (Lang -> Map)
+                   'default_lang': default_lang, # Язык, выбранный по умолчанию
+                   })
 
 # Вспомогательная функция для форматирования времени в WebVTT
 def format_time(seconds):

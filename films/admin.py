@@ -5,7 +5,6 @@ from .models import Country, Film, Person, Genre, SubtitleSet, SubtitleLine
 # 1. Inline для строк субтитров
 class SubtitleLineInline(admin.TabularInline):
     model = SubtitleLine
-    # ИСПРАВЛЕНО: Заменили 'style_classes' на 'style'
     fields = ('start_time', 'end_time', 'text', 'name', 'style')
     ordering = ('start_time',)
     extra = 0 # Не добавлять пустые формы по умолчанию

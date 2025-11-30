@@ -103,10 +103,24 @@
 
           {% if film.trailer_url %}
             <h5 class="mt-4">Видео с субтитрами</h5>
+
+            {# 1. ДОБАВЛЯЕМ СЕЛЕКТОР ЯЗЫКА #}
+            {% if available_languages %}
+            <div class="mb-3">
+                <label for="subtitle-language-select" class="form-label">Язык субтитров:</label>
+                <select id="subtitle-language-select" class="form-select w-auto">
+                    {% for lang in available_languages %}
+                    <option value="{{ lang }}" {% if lang == default_lang %}selected{% endif %}>
+                        {{ lang }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+
             <div
                 class="main-video-wrapper ratio ratio-16x9"
                 data-film-id="{{ film.id }}"
-                data-lang-code="ru"
             >
                 <iframe
                     id="youtube-player"
@@ -120,37 +134,67 @@
                 <div id="custom-subtitle-overlay"></div>
             </div>
 
-            {{ speaker_color_map|default:"{}"|json_script:"speaker-styles-data" }}
+            {# 2. ПЕРЕДАЕМ ВСЕ КАРТЫ ЦВЕТОВ В JS #}
+            {# Используем новую переменную all_speaker_color_maps #}
+            {% if all_speaker_color_maps %}
+            {{ all_speaker_color_maps|json_script:"all-speaker-styles-data" }}
+            {% endif %}
 
             <script src="{% static 'films/js/subtitle_sync.js' %}"></script>
 
             <script>
                 (function() {
-                    const scriptTag = document.getElementById('speaker-styles-data');
-                    let speakerStyles = {};
+                    const select = document.getElementById('subtitle-language-select');
+                    const filmId = {{ film.id }};
+                    const defaultLang = '{{ default_lang }}';
 
-                    if (scriptTag) {
+                    // 1. Извлекаем ВСЕ карты цветов
+                    const allStylesScript = document.getElementById('all-speaker-styles-data');
+                    let allSpeakerStyles = {};
+
+                    if (allStylesScript) {
                         try {
-                            // ✅ Извлекаем JSON из скрытого тега
-                            speakerStyles = JSON.parse(scriptTag.textContent);
+                            allSpeakerStyles = JSON.parse(allStylesScript.textContent);
                         } catch (e) {
-                            console.error("Error parsing JSON from json_script:", e);
+                            console.error("Error parsing all speaker styles JSON:", e);
                         }
                     }
 
-                    console.log("Parsed Speaker Styles Object:", speakerStyles);
+                    // --- 3. ФУНКЦИЯ ЗАГРУЗКИ СУБТИТРОВ И СТИЛЕЙ ---
+                    function loadSubtitles(lang) {
+                        if (lang === 'none' || typeof initializeSubtitleSync === 'undefined') {
+                            // Если нет языка или функция JS не загружена
+                            console.warn('Subtitles not loaded, language is missing or JS function not defined.');
+                            return;
+                        }
 
-                    // Если вы используете переменную 'target_lang', замените 'fr'
-                    var vttUrl = "{% url 'films:get_subtitles' film_id=film.id language_code='fr' %}";
+                        // Выбираем карту стилей для выбранного языка
+                        const speakerStyles = allSpeakerStyles[lang] || {};
 
-                    if (typeof initializeSubtitleSync !== 'undefined') {
+                        // Формируем URL VTT-файла, используя 'LANGUAGE_PLACEHOLDER'
+                        // Затем заменяем его на выбранный язык
+                        const vttUrlTemplate = "{% url 'films:get_subtitles' film_id=film.id language_code='LANGUAGE_PLACEHOLDER' %}";
+                        const vttUrl = vttUrlTemplate.replace('LANGUAGE_PLACEHOLDER', lang);
+
+                        // Инициализируем (или переинициализируем) синхронизацию
                         initializeSubtitleSync(
                             vttUrl,
                             'youtube-player',
                             'custom-subtitle-overlay',
                             speakerStyles
                         );
+                        console.log(`Subtitles set to: ${lang}`);
                     }
+
+                    // 4. Добавляем слушателя событий на изменение выбора
+                    if (select) {
+                        select.addEventListener('change', (event) => {
+                            loadSubtitles(event.target.value);
+                        });
+                    }
+
+                    // 5. Загружаем язык по умолчанию при первом рендеринге
+                    loadSubtitles(defaultLang);
                 })();
             </script>
 
