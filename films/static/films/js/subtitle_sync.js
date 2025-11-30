@@ -44,57 +44,74 @@ function initializeSubtitleSync(vttUrl, playerId, overlayId, speakerStyles) {
     /**
      * Парсит VTT-файл.
      */
-    function parseVTT(vttText) {
+function parseVTT(vttText) {
         const cues = [];
-        const lines = vttText.split('\n').map(line => line.trim());
+        // Используем надежный разделитель, чтобы учесть \r\n (Windows) и \n (Linux/Unix)
+        const lines = vttText.split(/\r?\n/).map(line => line.trim());
 
         let i = 0;
-        while (i < lines.length) {
-            // Ищем строку с временными метками
-            if (lines[i].includes('-->')) {
-                const timeLine = lines[i].trim();
+        // Пропускаем заголовок 'WEBVTT' и пустые строки
+        while (i < lines.length && !lines[i].includes('-->')) {
+            i++;
+        }
 
-                // 1. Ищем имя спикера в строке тайминга ДО очистки
+        while (i < lines.length) {
+            if (lines[i].includes('-->')) {
+                let timeLine = lines[i].trim();
+
+                // 1. Извлечение имени спикера из строки тайминга
                 let speakerName = null;
+                // speakerTagRegex = /<v\s*([^>]+)>/;
                 const vTagMatch = timeLine.match(speakerTagRegex);
+
                 if (vTagMatch) {
+                    // Группа 1 (vTagMatch[1]) содержит имя спикера.
                     speakerName = vTagMatch[1].trim();
+
+                    // 2. ОЧИЩАЕМ строку тайминга от тега спикера
+                    timeLine = timeLine.replace(speakerTagRegex, '').trim();
+
+                    // 🚨 КОНТРОЛЬНЫЙ ЛОГ: Имя должно выводиться здесь
+                    // Теперь мы можем заменить ваш старый лог 'Первый спикер: null'
+                    if (cues.length === 0) {
+                        console.log("PARSED FIRST SPEAKER:", speakerName);
+                    }
                 }
 
-                // 2. Очищаем строку тайминга от тега спикера, чтобы не мешал парсить время
-                // Было: 00:00:05.000 --> 00:00:07.000 <v Ivonn>
-                // Стало: 00:00:05.000 --> 00:00:07.000
-                const cleanTimeLine = timeLine.replace(speakerTagRegex, '').trim();
-
                 // 3. Разбиваем по стрелке
-                const timeParts = cleanTimeLine.split('-->');
+                const timeParts = timeLine.split('-->');
 
                 if (timeParts.length === 2) {
                     const startSec = parseTime(timeParts[0].trim());
-                    const endSec = parseTime(timeParts[1].trim());
+                    // Вторая часть: берем только время (отбрасывая возможные настройки VTT)
+                    const endSec = parseTime(timeParts[1].trim().split(' ')[0]);
 
                     // 4. Текст субтитра
                     i++;
                     let text = lines[i] ? lines[i].trim() : '';
 
-                    // Объединяем многострочные субтитры
+                    // Объединяем многострочные субтитры (ищем пустую строку)
                     while (lines[i + 1] && lines[i + 1].trim() !== '') {
                         i++;
-                        text += '\n' + lines[i].trim();
+                        text += ' ' + lines[i].trim();
                     }
 
-                    if (!isNaN(startSec) && !isNaN(endSec)) {
+                    if (!isNaN(startSec) && !isNaN(endSec) && text) {
                         cues.push({
                             start: startSec,
                             end: endSec,
                             text: text,
-                            speaker: speakerName // Сохраняем имя!
+                            speaker: speakerName
                         });
                     }
                 }
             }
             i++;
         }
+
+        // 🚨 КОНТРОЛЬНЫЙ ЛОГ: Проверяем общее количество загруженных субтитров
+        console.log(`[SubtitleSync] Загружено субтитров: ${cues.length}`);
+
         return cues;
     }
 
@@ -168,39 +185,48 @@ function initializeSubtitleSync(vttUrl, playerId, overlayId, speakerStyles) {
         }
     }
 
-    function displaySubtitle(cue) {
-        const speakerName = cue.speaker;
-        let styledText = cue.text;
-        const classList = ['subtitle-line-text'];
-        let speakerElement = '';
-        let dynamicStyleString = '';
+function displaySubtitle(cue) {
+    const speakerNameRaw = cue.speaker; // Имя, как пришло из VTT
+    let styledText = cue.text;
+    const classList = ['subtitle-line-text'];
+    let speakerElement = '';
+    let dynamicStyleString = '';
 
-        // 1. Обработка ИМЕНИ
-        if (speakerName) {
-            speakerElement = `<span class="speaker">${speakerName}:</span> `;
-            // Ищем цвет в переданном объекте speakerStyles
-            const color = speakerStyles[speakerName];
-            if (color) {
-                dynamicStyleString = `color: ${color};`;
-            }
+    // 1. Обработка ИМЕНИ
+    if (speakerNameRaw) {
+        // 🛑 ИСПРАВЛЕНИЕ #1: Очищаем имя от пробелов, чтобы оно точно совпало
+        // с ключом в speakerStyles (который был введен без пробелов в админке)
+        const speakerName = speakerNameRaw.trim();
+
+        // 🛑 ИСПРАВЛЕНИЕ #2: Создаем элемент спикера с очищенным именем
+        speakerElement = `<span class=\"speaker\">${speakerName}:</span> `;
+
+        // Ищем цвет в переданном объекте speakerStyles по очищенному имени
+        const color = speakerStyles[speakerName];
+
+        if (color) {
+            // Применяем inline-стиль к обертке
+            dynamicStyleString = `color: ${color};`;
         }
-
-        // 2. Обработка КЛАССОВ (<c.loud>)
-        styledText = styledText.replace(styleTagRegex, (match, classNamesString) => {
-             const individualClasses = classNamesString.split('.').filter(c => c.trim() !== '');
-             individualClasses.forEach(c => {
-                 if (c && !classList.includes(c)) classList.push(c);
-             });
-             return '';
-        });
-        styledText = styledText.replace(/<\/c>/g, '');
-
-        // 3. Генерация HTML
-        const finalClasses = classList.join(' ');
-        overlay.innerHTML = `<span class="${finalClasses}" style="${dynamicStyleString}">`
-                            + `${speakerElement}${styledText}`
-                            + `</span>`;
     }
+
+    // 2. Обработка КЛАССОВ (<c.loud>) - Оставляем как есть
+    styledText = styledText.replace(styleTagRegex, (match, classNamesString) => {
+         const individualClasses = classNamesString.split('.').filter(c => c.trim() !== '');
+         individualClasses.forEach(c => {
+             if (c && !classList.includes(c)) classList.push(c);
+         });
+         return '';
+    });
+    styledText = styledText.replace(/<\/c>/g, '');
+
+    // 3. Генерация HTML
+    const finalClasses = classList.join(' ');
+    // Вставляем speakerElement (имя со стилем), если оно было найдено
+    overlay.innerHTML = `<span class=\"${finalClasses}\" style=\"${dynamicStyleString}\">`
+                        + `${speakerElement}${styledText}`
+                        + `</span>`;
+}
 
     function hideSubtitle() {
         overlay.innerHTML = '';

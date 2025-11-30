@@ -135,6 +135,7 @@ def film_detail(request, id):
     film = get_object_or_404(queryset, id=id)
     speaker_color_map = {}
     target_set = None
+    target_lang = 'fr' # Добавим, чтобы избежать ошибки Reverse, если не найдено
 
     try:
         # 1. Сначала, пробуем получить русский набор (приоритет)
@@ -144,17 +145,19 @@ def film_detail(request, id):
             # 2. Если русского нет, пробуем получить любой первый попавшийся набор
             target_set = film.subtitle_sets.first()
         except Exception:
-            # Ничего не найдено
             pass
 
     if target_set:
         speaker_color_map = target_set.speaker_color_map
+        target_lang = target_set.language # Сохраняем найденный язык
 
-    speaker_color_map_json = json.dumps(speaker_color_map)
+    # 🛑 УДАЛИТЬ: Не используем json.dumps()
+    # speaker_color_map_json = json.dumps(speaker_color_map)
 
     return render(request, 'films/film/detail.html',
                   {'film': film,
-                   'speaker_color_map': speaker_color_map_json})
+                   'speaker_color_map': speaker_color_map, # ✅ Передаем Python-словарь
+                   'target_lang': target_lang}) # ✅ Передаем язык для URL
 
 
 @user_passes_test(check_admin)
@@ -267,20 +270,52 @@ class CountryAutocomplete(autocomplete.Select2QuerySetView):
             countries = countries.filter(name__istartswith=self.q)
         return countries
 
+# Вспомогательная функция для форматирования времени в WebVTT
+def format_time(seconds):
+    """Конвертирует float-секунды в формат HH:MM:SS.mmm"""
+    ms = round(seconds * 1000)
+    h = ms // 3600000
+    ms %= 3600000
+    m = ms // 60000
+    ms %= 60000
+    s = ms // 1000
+    ms %= 1000
+    return f"{h:02}:{m:02}:{s:02}.{ms:03}"
+
 def get_subtitles(request, film_id, language_code):
     """
     Отдает WebVTT файл по запросу клиента.
-    URL: /films/123/subtitles/ru.vtt
     """
     try:
-        subtitle_set = SubtitleSet.objects.get(
+        # Убедимся, что используем prefetch_related, как было ранее
+        subtitle_set = SubtitleSet.objects.prefetch_related('lines').get(
             film_id=film_id,
             language__iexact=language_code
         )
     except SubtitleSet.DoesNotExist:
-        raise Http404("Набор субтитров не найден для указанного фильма и языка.")
+        from django.http import Http404
+        raise Http404(f"Набор субтитров ({language_code}) не найден.")
 
-    vtt_content = subtitle_set.generate_vtt()
+    vtt_content = "WEBVTT\n\n"
 
-    response = HttpResponse(vtt_content, content_type='text/vtt')
-    return response
+    for line in subtitle_set.lines.all().order_by('start_time'):
+        start_time_vtt = format_time(line.start_time)
+        end_time_vtt = format_time(line.end_time)
+
+        # Начало строки времени
+        time_line = f"{start_time_vtt} --> {end_time_vtt}"
+
+        # 1. КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Добавление тега спикера <v Имя> к СТРОКЕ ВРЕМЕНИ
+        if line.name:
+            speaker_name_cleaned = line.name.strip()
+            # Добавляем VTT-тег спикера <v Name> к строке времени, через пробел
+            time_line += f" <v {speaker_name_cleaned}>"
+
+        # 2. Заголовок (время) с опциональным спикером и переносом строки
+        vtt_content += f"{time_line}\n"
+
+        # 3. Добавление текста субтитра
+        # Мы берем чистый текст, так как имя спикера уже добавлено в time_line
+        vtt_content += f"{line.text}\n\n"
+
+    return HttpResponse(vtt_content, content_type="text/vtt; charset=utf-8")

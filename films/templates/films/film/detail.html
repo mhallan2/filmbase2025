@@ -120,21 +120,27 @@
                 <div id="custom-subtitle-overlay"></div>
             </div>
 
+            {{ speaker_color_map|default:"{}"|json_script:"speaker-styles-data" }}
+
             <script src="{% static 'films/js/subtitle_sync.js' %}"></script>
 
             <script>
                 (function() {
-                    const jsonString = '{{ speaker_color_map|default:"{}"|safe }}';
+                    const scriptTag = document.getElementById('speaker-styles-data');
+                    let speakerStyles = {};
 
-                    // 🚨 ЛОГ 1: Проверяем, как выглядит строка ПЕРЕД парсингом.
-                    // Ищите лишние символы или неэкранированные кавычки.
-                    console.log("JSON String from Django:", jsonString);
+                    if (scriptTag) {
+                        try {
+                            // ✅ Извлекаем JSON из скрытого тега
+                            speakerStyles = JSON.parse(scriptTag.textContent);
+                        } catch (e) {
+                            console.error("Error parsing JSON from json_script:", e);
+                        }
+                    }
 
-                    const speakerStyles = JSON.parse(jsonString); // <-- Здесь возникает ошибка
-
-                    // 🚨 ЛОГ 2: Проверяем, успешно ли объект разобран (если ошибка исчезнет).
                     console.log("Parsed Speaker Styles Object:", speakerStyles);
 
+                    // Если вы используете переменную 'target_lang', замените 'fr'
                     var vttUrl = "{% url 'films:get_subtitles' film_id=film.id language_code='fr' %}";
 
                     if (typeof initializeSubtitleSync !== 'undefined') {
