@@ -157,25 +157,32 @@ class SubtitleSet(MyModel):
             # 1. Формируем строку с таймингами
             vtt_cue_line = f"{start_time} --> {end_time}"
 
-            # 2. Извлечение имени спикера (используем 'speaker' вместо 'name')
-            speaker_name = style_data.get('speaker')
-            if speaker_name:
-                # Добавляем имя спикера в строку таймингов, как в VTT <v Имя>
-                vtt_cue_line += f" <v {speaker_name}>" # Используем <v>
+            # 🛑 ИСПРАВЛЕНИЕ: Удаляем добавление тега <v Name> из строки таймингов.
+            # В этой строке остается только время.
 
             vtt_lines.append(vtt_cue_line) # <-- Заголовок метки
 
-            # 3. Собираем классы для отображения (VTT-стилизация)
+            # 2. Извлечение имени спикера (используем 'speaker' из JSON style)
+            speaker_name = style_data.get('speaker')
+
+            # Инициализируем контент текста
+            text_content = line.text
+
+            # ✅ КОРРЕКТИРОВКА: Добавляем тег спикера в НАЧАЛО ТЕКСТА
+            if speaker_name:
+                # Добавляем тег <v Имя> перед текстом субтитра
+                text_content = f"<v {speaker_name}> {text_content.strip()}"
+
+                # 3. Собираем классы для отображения (VTT-стилизация)
             custom_classes = style_data.get('classes', [])
 
-            # 4. Собираем финальный контент (ТОЛЬКО ЧИСТЫЙ ТЕКСТ и VTT-теги)
-            # Если есть общие классы (например, 'loud'), оборачиваем текст.
+            # 4. Собираем финальный контент (обертывая текст и тег спикера в <c.класс>)
             if custom_classes:
                 class_string = ".".join(custom_classes)
-                # Оборачиваем текст в тег <c.класс1.класс2>
-                text_content = f"<c.{class_string}>{line.text}</c>"
-            else:
-                text_content = line.text
+                # Оборачиваем текст (который теперь может содержать <v Name>) в тег <c.класс1.класс2>
+                text_content = f"<c.{class_string}>{text_content}</c>"
+            # else:
+            # text_content уже содержит либо чистый текст, либо текст с <v Name>
 
             # 5. Добавляем чистый текст субтитра
             vtt_lines.append(text_content.strip())

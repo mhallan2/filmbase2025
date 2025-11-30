@@ -4,9 +4,7 @@ import re
 import os
 
 
-# --- РЕГУЛЯРНЫЕ ВЫРАЖЕНИЯ ---
-
-# ⚡ НОВОЕ РЕГУЛЯРНОЕ ВЫРАЖЕНИЕ для извлечения <v Name> из строки тайминга
+# Регулярное выражение для извлечения <v Name>
 SPEAKER_TAG_REGEX = re.compile(r'<v\s*([^>]+)>')
 
 TIME_FORMAT_REGEX = re.compile(r'(\d{1,2}:\d{2}:\d{2}\.\d{3}|\d{2}:\d{2}\.\d{3})')
@@ -72,20 +70,22 @@ class Command(BaseCommand):
             end_line_part = match.group(2).strip()
             raw_text = match.group(3).strip()
 
-            # --- 1. Извлечение Имени (<v Name>) ИЗ СТРОКИ ТАЙМИНГА ---
+            # Имя спикера по умолчанию
             name = None
-            text = raw_text # Текст остается полным raw_text
+            # Используем end_line_part как чистое время окончания,
+            # так как тега спикера там больше нет.
+            end_time_str = end_line_part
 
-            # ⚡ Ищем тег спикера в строке тайминга (end_line_part)
-            name_match = SPEAKER_TAG_REGEX.search(end_line_part)
+            # 🛑 КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ #1: Ищем тег спикера <v Name> ВНУТРИ текста
+            text = raw_text
+
+            name_match = SPEAKER_TAG_REGEX.search(text)
 
             if name_match:
                 name = name_match.group(1).strip() # Извлекаем имя
-                # Удаляем тег спикера, чтобы получить только чистое время окончания
-                end_time_str = SPEAKER_TAG_REGEX.sub('', end_line_part).strip()
-            else:
-                # Если тега нет, строка тайминга используется как есть
-                end_time_str = end_line_part
+                # 🛑 КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ #2: Удаляем тег спикера ИЗ ТЕКСТА,
+                # чтобы он не попал в поле SubtitleLine.text
+                text = SPEAKER_TAG_REGEX.sub('', text, 1).strip()
 
             # --- 2. Извлечение Классов Стилизации (<c.loud>) ---
             style_classes = []
@@ -95,9 +95,10 @@ class Command(BaseCommand):
                 style_classes.append(style_match.group(1).strip())
 
             # Очищаем текст от всех <c> тегов, оставляя их содержимое
+            # Используем 'text', который теперь без тега <v Name>
             clean_text = STYLE_CLASS_REGEX.sub(r'\2', text).strip()
 
-            # Финальная очистка текста от любых оставшихся тегов
+            # Финальная очистка текста от любых оставшихся тегов (например, HTML-теги)
             clean_text = re.sub(r'<[^>]+>', '', clean_text).strip()
 
             # Формируем JSON-поле style
@@ -108,7 +109,7 @@ class Command(BaseCommand):
                     'start': self._vtt_time_to_seconds(start_time_str),
                     'end': self._vtt_time_to_seconds(end_time_str),
                     'text': clean_text,
-                    'name': name,
+                    'name': name, # Здесь теперь корректное имя или None
                     'style_data': style_data
                 })
             except ValueError as e:

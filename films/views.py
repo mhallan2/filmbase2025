@@ -238,6 +238,9 @@ class CountryAutocomplete(autocomplete.Select2QuerySetView):
             countries = countries.filter(name__istartswith=self.q)
         return countries
 
+# -----------------------------------------------------------------
+# ОБНОВЛЕННАЯ ФУНКЦИЯ FILM_DETAIL
+# -----------------------------------------------------------------
 def film_detail(request, id):
     # Добавляем prefetch для subtitle_sets для оптимизации
     queryset = Film.objects.prefetch_related("country", "genres", "director",
@@ -245,7 +248,6 @@ def film_detail(request, id):
     film = get_object_or_404(queryset, id=id)
 
     # 1. Получаем ВСЕ наборы субтитров
-    # (Обратите внимание: .order_by('language') для предсказуемого порядка)
     subtitle_sets = film.subtitle_sets.all().order_by('language')
 
     # 2. Инициализация структур данных
@@ -255,16 +257,16 @@ def film_detail(request, id):
     default_lang = 'none' # Заглушка, если субтитров нет
 
     for sset in subtitle_sets:
-        lang = sset.language
+        # Убедимся, что язык чистый
+        lang = sset.language.strip()
         available_languages.append(lang)
-        all_speaker_color_maps[lang] = sset.speaker_color_map
+        # Убедимся, что speaker_color_map не None, иначе используем пустой словарь
+        all_speaker_color_maps[lang] = sset.speaker_color_map or {}
 
         # Логика выбора языка по умолчанию: русский, затем первый найденный
         if lang.lower() == 'ru':
             default_lang = lang
-            # Если нашли русский, можем остановиться, он будет приоритетным
-            # Но мы продолжаем, чтобы собрать все карты цветов
-        elif default_lang == 'none':
+        elif default_lang == 'none' and lang:
             # Если русский еще не выбран, берем первый из списка
             default_lang = lang
 
@@ -274,6 +276,7 @@ def film_detail(request, id):
                    'all_speaker_color_maps': all_speaker_color_maps, # Полная карта цветов (Lang -> Map)
                    'default_lang': default_lang, # Язык, выбранный по умолчанию
                    })
+
 
 # Вспомогательная функция для форматирования времени в WebVTT
 def format_time(seconds):
@@ -287,18 +290,22 @@ def format_time(seconds):
     ms %= 1000
     return f"{h:02}:{m:02}:{s:02}.{ms:03}"
 
+
+# -----------------------------------------------------------------
+# ОБНОВЛЕННАЯ ФУНКЦИЯ GET_SUBTITLES (С ТЕГОМ <V ИМЯ> В ТЕКСТЕ)
+# -----------------------------------------------------------------
 def get_subtitles(request, film_id, language_code):
     """
     Отдает WebVTT файл по запросу клиента.
+    Тег спикера <v Имя> добавляется в начало текста субтитра.
     """
     try:
-        # Убедимся, что используем prefetch_related, как было ранее
+        # Получаем набор субтитров с предварительной загрузкой строк
         subtitle_set = SubtitleSet.objects.prefetch_related('lines').get(
             film_id=film_id,
             language__iexact=language_code
         )
     except SubtitleSet.DoesNotExist:
-        from django.http import Http404
         raise Http404(f"Набор субтитров ({language_code}) не найден.")
 
     vtt_content = "WEBVTT\n\n"
@@ -307,20 +314,19 @@ def get_subtitles(request, film_id, language_code):
         start_time_vtt = format_time(line.start_time)
         end_time_vtt = format_time(line.end_time)
 
-        # Начало строки времени
-        time_line = f"{start_time_vtt} --> {end_time_vtt}"
+        # 1. Заголовок (время) - БЕЗ СПИКЕРА В ЭТОЙ СТРОКЕ
+        vtt_content += f"{start_time_vtt} --> {end_time_vtt}\n"
 
-        # 1. КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Добавление тега спикера <v Имя> к СТРОКЕ ВРЕМЕНИ
+        # 2. Текст субтитра с добавлением тега спикера <v Имя> в НАЧАЛО текста
+        text_to_write = line.text
+
         if line.name:
             speaker_name_cleaned = line.name.strip()
-            # Добавляем VTT-тег спикера <v Name> к строке времени, через пробел
-            time_line += f" <v {speaker_name_cleaned}>"
+            # Добавляем VTT-тег спикера <v Name> в начало строки текста
+            text_to_write = f"<v {speaker_name_cleaned}>{text_to_write}"
 
-        # 2. Заголовок (время) с опциональным спикером и переносом строки
-        vtt_content += f"{time_line}\n"
+        # 3. Добавление текста субтитра и пустой строки для разделения
+        vtt_content += f"{text_to_write}\n\n"
 
-        # 3. Добавление текста субтитра
-        # Мы берем чистый текст, так как имя спикера уже добавлено в time_line
-        vtt_content += f"{line.text}\n\n"
-
+    # Примечание: content_type для VTT должен быть 'text/vtt; charset=utf-8'
     return HttpResponse(vtt_content, content_type="text/vtt; charset=utf-8")
