@@ -50,7 +50,7 @@
 </div>
 
 {# --- БЛОК JAVASCRIPT ДЛЯ ДОБАВЛЕНИЯ СТРОК --- #}
-<script src="{% static 'films/js/jquery-3.7.1.min.js' %}"></script>
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
 <script>
     $(document).ready(function() {
         const $tableBody = $('#subtitle-table tbody');
@@ -61,27 +61,35 @@
             {% endfilter %}
         `;
 
-        $('#add-subtitle-row').click(function() {
-            const currentTotalForms = parseInt($totalForms.val());
-            
+$('#add-subtitle-row').click(function() {
+            // ⚡ КРИТИЧЕСКАЯ ПРАВКА #1: Находим элемент внутри функции для гарантии актуальности
+            const $totalForms = $('#id_lines-TOTAL_FORMS');
+
+            // Используем || 0 для защиты от NaN и пустых строк.
+            const currentTotalForms = parseInt($totalForms.val()) || 0;
+
             // 1. Копируем HTML пустой формы
             let newFormHtml = emptyFormHtml.replace(/__prefix__/g, currentTotalForms);
-            
+
             // 2. Добавляем форму в таблицу
             $tableBody.append(newFormHtml);
-            
+
             // 3. Обновляем счетчик TOTAL_FORMS
+            // ⚡ КРИТИЧЕСКАЯ ПРАВКА #2: Записываем новое значение.
             $totalForms.val(currentTotalForms + 1);
 
             // 4. Обновляем нумерацию в первой ячейке новой строки
             const $newRow = $tableBody.find('tr').last();
             $newRow.find('td:first').text(currentTotalForms + 1);
 
-            // Очищаем форму от класса table-danger, если он был в шаблоне
+            // Очищаем форму от класса table-danger
             $newRow.removeClass('table-danger');
-            
-            // Фокус на поле start_time
-            $newRow.find('input[name$="start_time"]').focus();
+
+            // 5. Фикс для слэшей в JSON (из предыдущей дискуссии)
+            const $styleField = $newRow.find('textarea[name$="-style"]');
+            if ($styleField.length && $styleField.val().includes('\\"')) {
+                $styleField.val($styleField.val().replace(/\\"/g, '"'));
+            }
         });
     });
 </script>

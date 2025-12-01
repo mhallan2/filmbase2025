@@ -43,6 +43,16 @@ class PersonForm(forms.ModelForm):
 
 class SubtitleLineForm(forms.ModelForm):
     """Форма для редактирования одной строки субтитра с пользовательской валидацией."""
+
+    # ⚡ КРИТИЧЕСКАЯ ПРАВКА: Установка начального значения для новых форм
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Проверяем, что это новая форма (instance.pk is None) и поле style не имеет значения.
+        if self.instance.pk is None and not self.initial.get('style'):
+            # Устанавливаем начальное значение в виде JSON-строки, как вы просили.
+            self.initial['style'] = {"classes": []}
+
     class Meta:
         model = SubtitleLine
         fields = ['id', 'start_time', 'end_time', 'text', 'name', 'style']
@@ -95,6 +105,6 @@ SubtitleLineFormSet = inlineformset_factory(
     model=SubtitleLine, 
     form=SubtitleLineForm,
     fields=['id', 'start_time', 'end_time', 'text', 'name', 'style'],
-    extra=3, # <-- ИЗМЕНЕНИЕ: Добавляем 3 пустые формы для добавления
+    extra=0, # <-- ИЗМЕНЕНИЕ: Добавляем 3 пустые формы для добавления
     can_delete=True
 )
