@@ -177,7 +177,7 @@ function checkSubtitle() {
 
 function onPlayerReady(event) {
     const state = window.subtitleSyncState;
-    // Проверяем, есть ли данные в глобальном состоянии
+    // Проверяем, есть ли данные в глобальном состоянии. Если данные уже загружены, начинаем проверку.
     if (state.subtitlesData.length > 0) startSubtitleCheck();
 }
 
@@ -194,16 +194,18 @@ function onPlayerStateChange(event) {
 }
 
 // =======================================================
-//             ГЛАВНАЯ ФУНКЦИЯ ИНИЦИАЛИЗАЦИИ (КОРОТКАЯ)
+//             ГЛАВНАЯ ФУНКЦИЯ ИНИЦИАЛИЗАЦИИ
 // =======================================================
 
 function initializeSubtitleSync(vttUrl, playerId, overlayId, incomingSpeakerStyles) {
     const state = window.subtitleSyncState;
 
-    // 🛑 1. КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ #1: Идемпотентность по VTT URL
+    // 🛑 1. Идемпотентность и проверка готовности плеера
+    const isPlayerReady = state.player && typeof state.player.getPlayerState === 'function';
+
     if (state.currentVttUrl === vttUrl) {
         console.warn(`[SubtitleSync] Same VTT URL used: ${vttUrl}. Skipping re-load.`);
-        if (state.player && state.player.getPlayerState() === YT.PlayerState.PLAYING) {
+        if (isPlayerReady && state.player.getPlayerState() === YT.PlayerState.PLAYING) {
              startSubtitleCheck();
         }
         return;
@@ -216,10 +218,11 @@ function initializeSubtitleSync(vttUrl, playerId, overlayId, incomingSpeakerStyl
         console.log('[SubtitleSync] Old interval cleared for new VTT load.');
     }
 
-    state.currentVttUrl = vttUrl; // Сохраняем новый URL
-    state.subtitlesData = []; // Очищаем данные от старого языка
-    state.speakerStyles = incomingSpeakerStyles; // 🛑 НОВОЕ: Сохраняем стили
-    document.getElementById(overlayId).innerHTML = ''; // Очищаем оверлей
+    state.currentVttUrl = vttUrl; 
+    state.subtitlesData = [];
+    state.speakerStyles = incomingSpeakerStyles; 
+    const overlay = document.getElementById(overlayId);
+    if (overlay) overlay.innerHTML = '';
 
 
     // 3. Загрузка VTT-файла
@@ -232,11 +235,10 @@ function initializeSubtitleSync(vttUrl, playerId, overlayId, incomingSpeakerStyl
             return response.text();
         })
         .then(vttText => {
-            // Сохраняем данные в ГЛОБАЛЬНОЕ состояние
             state.subtitlesData = parseVTT(vttText);
 
             // Запуск синхронизации после загрузки
-            if (state.player && state.player.getPlayerState() === YT.PlayerState.PLAYING) {
+            if (isPlayerReady && state.player.getPlayerState() === YT.PlayerState.PLAYING) {
                  startSubtitleCheck();
             } else if (state.player) {
                 checkSubtitle();
@@ -244,21 +246,22 @@ function initializeSubtitleSync(vttUrl, playerId, overlayId, incomingSpeakerStyl
         })
         .catch(error => {
             console.error('[SubtitleSync] Ошибка загрузки:', error);
-            document.getElementById(overlayId).innerHTML = '<span class="subtitle-line-text" style="color: red;">Ошибка загрузки субтитров.</span>';
+            if (overlay) {
+                overlay.innerHTML = '<span class="subtitle-line-text" style="color: red;">Ошибка загрузки субтитров.</span>';
+            }
         });
 
     // 4. Инициализация плеера (только один раз)
     if (!state.player) {
-        window.onYouTubeIframeAPIReady = function() {
+        // 🛑 КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Создаем плеер сразу, если YT API готов.
+        // Мы УДАЛИЛИ логику перезаписи window.onYouTubeIframeAPIReady из этого файла.
+        if (typeof YT !== 'undefined' && typeof YT.Player === 'function') {
             state.player = new YT.Player(playerId, {
                 events: {
                     'onReady': onPlayerReady,
                     'onStateChange': onPlayerStateChange
                 }
             });
-        }
-        if (typeof YT !== 'undefined' && typeof YT.Player === 'function' && !state.player) {
-             window.onYouTubeIframeAPIReady();
         }
     }
 }

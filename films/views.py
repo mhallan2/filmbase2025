@@ -2,11 +2,10 @@ from dal import autocomplete
 from django.shortcuts import get_object_or_404, redirect, render
 from django.contrib.auth.decorators import user_passes_test
 from .models import Country, Film, Genre, Person, SubtitleSet
-from .forms import CountryForm, GenreForm, FilmForm, PersonForm
+from .forms import CountryForm, GenreForm, FilmForm, PersonForm, SubtitleLineFormSet
 from .helpers import paginate
 from django.contrib import messages
 from django.http import HttpResponse, Http404
-import json
 
 
 def check_admin(user):
@@ -298,6 +297,7 @@ def get_subtitles(request, film_id, language_code):
     """
     Отдает WebVTT файл по запросу клиента.
     Тег спикера <v Имя> добавляется в начало текста субтитра.
+    Теги стилей <c.класс> добавляются, если указаны в поле style.
     """
     try:
         # Получаем набор субтитров с предварительной загрузкой строк
@@ -314,19 +314,82 @@ def get_subtitles(request, film_id, language_code):
         start_time_vtt = format_time(line.start_time)
         end_time_vtt = format_time(line.end_time)
 
-        # 1. Заголовок (время) - БЕЗ СПИКЕРА В ЭТОЙ СТРОКЕ
+        # 1. Заголовок (время)
         vtt_content += f"{start_time_vtt} --> {end_time_vtt}\n"
 
-        # 2. Текст субтитра с добавлением тега спикера <v Имя> в НАЧАЛО текста
         text_to_write = line.text
 
+        # --- 2. ЛОГИКА ОБРАБОТКИ СТИЛЕЙ (классов) ---
+        open_style_tags = ""
+        close_style_tags = ""
+
+        # Проверяем, есть ли стили и классы в JSON-поле
+        if (line.style and isinstance(line.style, dict) 
+            and 'classes' in line.style and isinstance(line.style['classes'], list)):
+            
+            # Итерируемся по списку классов (например, ["loud", "bold"])
+            for class_name in line.style['classes']:
+                cleaned_class_name = class_name.strip()
+                if cleaned_class_name:
+                    # Создаем открывающий тег <c.className>
+                    open_style_tags += f"<c.{cleaned_class_name}>"
+                    # Создаем закрывающие теги в обратном порядке (LIFO)
+                    close_style_tags = "</c>" + close_style_tags
+        # ---------------------------------------------
+
+        # 3. Добавление тега спикера (<v Имя>)
         if line.name:
             speaker_name_cleaned = line.name.strip()
             # Добавляем VTT-тег спикера <v Name> в начало строки текста
             text_to_write = f"<v {speaker_name_cleaned}>{text_to_write}"
 
-        # 3. Добавление текста субтитра и пустой строки для разделения
+        # 4. Оборачиваем весь текст (с или без спикера) тегами стилей.
+        # Пример: <c.loud><v Ivonn>текст</c>
+        text_to_write = f"{open_style_tags}{text_to_write}{close_style_tags}"
+
+        # 5. Добавление текста субтитра и пустой строки для разделения
         vtt_content += f"{text_to_write}\n\n"
 
-    # Примечание: content_type для VTT должен быть 'text/vtt; charset=utf-8'
     return HttpResponse(vtt_content, content_type="text/vtt; charset=utf-8")
+
+@user_passes_test(check_admin)
+def subtitle_edit(request, film_id, lang_code):
+    """
+    Представление для редактирования строк субтитров с помощью Formset.
+    """
+    # 1. Загружаем родительский объект (Film и SubtitleSet)
+    film = get_object_or_404(Film, id=film_id)
+    
+    try:
+        # Находим конкретный набор субтитров по языку
+        subtitle_set = SubtitleSet.objects.get(film=film, language__iexact=lang_code)
+    except SubtitleSet.DoesNotExist:
+        messages.error(request, f'Набор субтитров для языка "{lang_code}" не найден.')
+        return redirect('films:film_detail', id=film_id)
+    
+    # 2. Инициализируем Formset
+    # instance=subtitle_set привязывает формсет к существующему набору субтитров
+    formset = SubtitleLineFormSet(request.POST or None, instance=subtitle_set)
+
+    # 3. Обработка POST-запроса (Сохранение)
+    if request.method == 'POST':
+        if formset.is_valid():
+            try:
+                # Сохраняем все формы в формсете (обновления, добавления, удаления)
+                formset.save()
+                messages.success(request, f'Субтитры ({lang_code}) для "{film.name}" успешно обновлены.')
+                # Перенаправляем обратно на страницу фильма
+                return redirect('films:film_detail', id=film_id)
+            except Exception as e:
+                 # Включая ошибки валидации JSON в поле 'style'
+                 messages.error(request, f'Ошибка при сохранении: {e}')
+        else:
+            messages.error(request, 'Обнаружены ошибки в форме. Пожалуйста, проверьте выделенные поля.')
+
+    # 4. Рендеринг шаблона
+    return render(request, 'films/subtitle_edit.html', {
+        'film': film,
+        'subtitle_set': subtitle_set,
+        'formset': formset,
+        'language_code': lang_code,
+    })

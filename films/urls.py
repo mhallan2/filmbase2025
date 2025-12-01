@@ -44,4 +44,6 @@ urlpatterns = [
         views.get_subtitles,
         name='get_subtitles'
     ),
+    path('films/<int:film_id>/subtitles/edit/<str:lang_code>/',
+         views.subtitle_edit, name='subtitle_edit'),
 ]

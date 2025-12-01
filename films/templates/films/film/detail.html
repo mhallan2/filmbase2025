@@ -28,6 +28,15 @@
           <i class="bi-pencil-square"></i>
           Редактировать
         </a>
+
+        <a id="edit-subtitles-link" 
+           href="#" 
+           class="btn btn-warning btn-block" 
+           style="display:none;">
+          <i class="bi-pen"></i>
+          Редактировать субтитры
+        </a>
+
         <a href="{% url 'films:film_delete' film.id %}" class="btn btn-danger btn-block">
           <i class="bi-trash"></i>
           Удалить
@@ -118,7 +127,7 @@
                     </select>
                 </div>
 
-                <div class="form-check form-switch">
+                <div class="form-check form-switch mt-4">
                     <input
                         class="form-check-input"
                         type="checkbox"
@@ -126,9 +135,6 @@
                         id="subtitles-toggle"
                         checked
                     >
-                    <label class="form-check-label" for="subtitles-toggle">
-                        Субтитры (Вкл/Выкл)
-                    </label>
                 </div>
 
             </div>
@@ -159,115 +165,136 @@
             <script src="{% static 'films/js/subtitle_sync.js' %}"></script>
 
             <script>
-                (function() {
-                    const select = document.getElementById('subtitle-language-select');
-                    const toggleSwitch = document.getElementById('subtitles-toggle'); // НОВЫЙ ЭЛЕМЕНТ
-                    const defaultLang = '{{ default_lang }}';
-                    const vttUrlTemplate = "{% url 'films:get_subtitles' film_id=film.id language_code='LANGUAGE_PLACEHOLDER' %}";
+              (function() {
+                  const select = document.getElementById('subtitle-language-select');
+                  const toggleSwitch = document.getElementById('subtitles-toggle'); 
+                  const editLink = document.getElementById('edit-subtitles-link'); // <-- NEW: Получаем ссылку на кнопку
+                  const defaultLang = '{{ default_lang }}';
+                  const vttUrlTemplate = "{% url 'films:get_subtitles' film_id=film.id language_code='LANGUAGE_PLACEHOLDER' %}";
+                  const editUrlTemplate = "{% url 'films:subtitle_edit' film_id=film.id lang_code='LANGUAGE_PLACEHOLDER' %}"; // <-- NEW: Шаблон URL для редактирования
 
-                    // 1. Извлекаем ВСЕ карты цветов
-                    const allStylesScript = document.getElementById('all-speaker-styles-data');
-                    let allSpeakerStyles = {};
+                  // 1. Извлекаем ВСЕ карты цветов
+                  const allStylesScript = document.getElementById('all-speaker-styles-data');
+                  let allSpeakerStyles = {};
 
-                    if (allStylesScript) {
-                        try {
-                            allSpeakerStyles = JSON.parse(allStylesScript.textContent);
-                        } catch (e) {
-                            console.error("Error parsing all speaker styles JSON:", e);
-                            return;
-                        }
-                    }
+                  if (allStylesScript) {
+                      try {
+                          allSpeakerStyles = JSON.parse(allStylesScript.textContent);
+                      } catch (e) {
+                          console.error("Error parsing all speaker styles JSON:", e);
+                          return;
+                      }
+                  }
 
-                    // 🛑 Защита: Если плеер уже инициализирован, выходим.
-                    if (window.subtitleSyncState && window.subtitleSyncState.player) {
-                        console.warn('Player already initialized. Skipping initial load.');
-                        return;
-                    }
+                  // 🛑 Защита: Если плеер уже инициализирован, выходим.
+                  if (window.subtitleSyncState && window.subtitleSyncState.player) {
+                      console.warn('Player already initialized. Skipping initial load.');
+                      return;
+                  }
 
-                    // --- ФУНКЦИЯ: ОТКЛЮЧЕНИЕ СУБТИТРОВ ---
-                    function disableSubtitles() {
-                        const state = window.subtitleSyncState;
-                        console.log('Subtitles disabled.');
+                  // --- NEW: ФУНКЦИЯ: Обновление ссылки на редактирование ---
+                  function updateSubtitleEditLink(langCode) {
+                      if (editLink) {
+                          // Заменяем плейсхолдер на выбранный код языка в шаблоне URL
+                          const newUrl = editUrlTemplate.replace('LANGUAGE_PLACEHOLDER', langCode);
+                          editLink.href = newUrl;
+                          // Показываем кнопку, только если субтитры для этого языка существуют
+                          editLink.style.display = langCode ? 'block' : 'none'; 
+                      }
+                  }
+                  // -----------------------------------------------------------
 
-                        // Используем глобальные функции из subtitle_sync.js для очистки состояния
-                        if (typeof stopSubtitleCheck !== 'undefined') stopSubtitleCheck();
-                        if (typeof hideSubtitle !== 'undefined') hideSubtitle();
+                  // --- ФУНКЦИЯ: ОТКЛЮЧЕНИЕ СУБТИТРОВ ---
+                  function disableSubtitles() {
+                      const state = window.subtitleSyncState;
+                      console.log('Subtitles disabled.');
 
-                        // Сброс состояния для принудительной перезагрузки при следующем включении
-                        if (state) {
-                            state.currentVttUrl = null;
-                            state.subtitlesData = [];
-                        }
+                      if (typeof stopSubtitleCheck !== 'undefined') stopSubtitleCheck();
+                      if (typeof hideSubtitle !== 'undefined') hideSubtitle();
 
-                        // 🛑 ВАЖНО: Мы НЕ сбрасываем SELECT.value. Это позволяет включить их снова!
-                    }
-                    // ---------------------------------------------
+                      if (state) {
+                          state.currentVttUrl = null;
+                          state.subtitlesData = [];
+                      }
+                  }
+                  // ---------------------------------------------
 
-                    /**
-                     * Инициализирует синхронизацию субтитров (только для включения).
-                     */
-                    function setupSubtitles(lang) {
-                        if (typeof initializeSubtitleSync === 'undefined' || !lang) {
-                            console.warn('JS function not defined or language missing.');
-                            return;
-                        }
+                  /**
+                   * Инициализирует синхронизацию субтитров (только для включения).
+                   */
+                  function setupSubtitles(lang) {
+                      if (typeof initializeSubtitleSync === 'undefined' || !lang) {
+                          console.warn('JS function not defined or language missing.');
+                          return;
+                      }
 
-                        const speakerStyles = allSpeakerStyles[lang] || {};
-                        const vttUrl = vttUrlTemplate.replace('LANGUAGE_PLACEHOLDER', lang);
+                      const speakerStyles = allSpeakerStyles[lang] || {};
+                      const vttUrl = vttUrlTemplate.replace('LANGUAGE_PLACEHOLDER', lang);
 
-                        initializeSubtitleSync(
-                            vttUrl,
-                            'youtube-player',
-                            'custom-subtitle-overlay',
-                            speakerStyles
-                        );
-                        console.log(`Subtitles set to: ${lang}`);
-                    }
+                      initializeSubtitleSync(
+                          vttUrl,
+                          'youtube-player',
+                          'custom-subtitle-overlay',
+                          speakerStyles
+                      );
+                      console.log(`Subtitles set to: ${lang}`);
+                      
+                      // <-- NEW: Обновляем ссылку на редактирование после загрузки
+                      updateSubtitleEditLink(lang);
+                  }
 
-                    // 4. Добавляем слушателя событий на изменение SELECT
-                    if (select) {
-                        select.addEventListener('change', (event) => {
-                            // 1. ОЧИЩАЕМ URL
-                            if (window.subtitleSyncState) window.subtitleSyncState.currentVttUrl = null;
+                  // 4. Добавляем слушателя событий на изменение SELECT
+                  if (select) {
+                      select.addEventListener('change', (event) => {
+                          if (window.subtitleSyncState) window.subtitleSyncState.currentVttUrl = null;
+                          if (toggleSwitch) toggleSwitch.checked = true;
+                          setupSubtitles(event.target.value);
+                      });
+                  }
 
-                            // 2. Включаем ползунок, если он был выключен (пользователь выбрал язык)
-                            if (toggleSwitch) toggleSwitch.checked = true;
+                  // 5. Добавляем слушателя событий на ПОЛЗУНОК (ВКЛ/ВЫКЛ)
+                  if (toggleSwitch) {
+                      toggleSwitch.addEventListener('change', (event) => {
+                          if (event.target.checked) {
+                              const currentLang = select ? select.value : defaultLang;
+                              if (currentLang) {
+                                  if (window.subtitleSyncState) window.subtitleSyncState.currentVttUrl = null;
+                                  setupSubtitles(currentLang);
+                              }
+                          } else {
+                              disableSubtitles();
+                              // <-- NEW: Скрываем кнопку редактирования при отключении субтитров
+                              if (editLink) editLink.style.display = 'none';
+                          }
+                      });
+                  }
 
-                            // 3. Загружаем субтитры
-                            setupSubtitles(event.target.value);
-                        });
-                    }
+                  // 6. Загружаем язык по умолчанию при первом рендеринге
+                  const initialLang = select && select.value ? select.value : defaultLang;
 
-                    // 5. Добавляем слушателя событий на ПОЛЗУНОК (ВКЛ/ВЫКЛ)
-                    if (toggleSwitch) {
-                        toggleSwitch.addEventListener('change', (event) => {
-                            if (event.target.checked) {
-                                // Если переключили на ON: загружаем текущий выбранный язык
-                                const currentLang = select ? select.value : defaultLang;
-                                if (currentLang) {
-                                    // Полный сброс URL для гарантии перезагрузки
-                                    if (window.subtitleSyncState) window.subtitleSyncState.currentVttUrl = null;
-                                    setupSubtitles(currentLang);
-                                }
-                            } else {
-                                // Если переключили на OFF: отключаем субтитры
-                                disableSubtitles();
-                            }
-                        });
-                    }
+                  // 🛑 КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ ДЛЯ ПРИНУДИТЕЛЬНОЙ ИНИЦИАЛИЗАЦИИ
+                  window.onYouTubeIframeAPIReady = function() {
+                      console.log('YouTube API is ready. Starting subtitle sync.');
+                      
+                      if (toggleSwitch) {
+                          toggleSwitch.checked = true;
+                          setupSubtitles(initialLang);
+                      } else {
+                          disableSubtitles();
+                      }
+                  };
 
-                    // 6. Загружаем язык по умолчанию при первом рендеринге
-                    const initialLang = select && select.value ? select.value : defaultLang;
-
-                    // 🛑 Инициализация происходит только если ползунок (по умолчанию) включен
-                    if (toggleSwitch && toggleSwitch.checked) {
-                        setupSubtitles(initialLang);
-                    } else {
-                        // Если по какой-то причине ползунок оказался выключен, очищаем.
-                        disableSubtitles();
-                    }
-                })();
-            </script>
+                  // Если YT API уже загружен (редкий случай), запускаем вручную
+                  if (typeof YT !== 'undefined' && YT.Player) {
+                      window.onYouTubeIframeAPIReady();
+                  }
+                  
+                  // <-- NEW: Обновляем ссылку на редактирование даже если субтитры отключены по умолчанию
+                  // Это гарантирует, что ссылка корректна, даже если ползунок был в положении 'выкл'
+                  updateSubtitleEditLink(initialLang); 
+                  
+              })();
+          </script>
 
           {% endif %}
 

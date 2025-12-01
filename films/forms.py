@@ -1,6 +1,7 @@
 from django import forms
+from django.forms import inlineformset_factory, BaseInlineFormSet
 from dal import autocomplete
-from .models import Country, Genre, Film, Person
+from .models import Country, Genre, Film, Person, SubtitleSet, SubtitleLine
 
 
 class CountryForm(forms.ModelForm):
@@ -39,3 +40,61 @@ class PersonForm(forms.ModelForm):
             "birthday": forms.DateInput(attrs={'type': 'date'},
                                         format="%Y-%m-%d")
         }
+
+class SubtitleLineForm(forms.ModelForm):
+    """Форма для редактирования одной строки субтитра с пользовательской валидацией."""
+    class Meta:
+        model = SubtitleLine
+        fields = ['id', 'start_time', 'end_time', 'text', 'name', 'style']
+        widgets = {
+            'start_time': forms.TextInput(attrs={'class': 'form-control form-control-sm', 'type': 'number', 'step': '0.00001', 'min': '0'}),
+            'end_time': forms.TextInput(attrs={'class': 'form-control form-control-sm', 'type': 'number', 'step': '0.00001', 'min': '0'}),
+            'text': forms.Textarea(attrs={'rows': 2, 'class': 'form-control'}),
+            'name': forms.TextInput(attrs={'class': 'form-control form-control-sm'}),
+            'style': forms.Textarea(attrs={'rows': 1, 'class': 'form-control form-control-sm', 'placeholder': '{"classes": ["loud"]}'}), 
+        }
+
+    def clean(self):
+        """
+        Пользовательская валидация для проверки времени начала/конца.
+        """
+        cleaned_data = super().clean()
+        start_time = cleaned_data.get('start_time')
+        end_time = cleaned_data.get('end_time')
+        
+        # Если форма помечена как удаляемая, пропускаем валидацию
+        if cleaned_data.get('DELETE'):
+            return cleaned_data
+            
+        # 1. Проверка на отрицательное время
+        if start_time is not None and start_time < 0:
+            self.add_error('start_time', 'Время начала не может быть отрицательным.')
+
+        if end_time is not None and end_time < 0:
+            self.add_error('end_time', 'Время окончания не может быть отрицательным.')
+            
+        # 2. Проверка, что start_time <= end_time
+        if start_time is not None and end_time is not None:
+            if start_time > end_time:
+                # Ошибку можно добавить к любому из полей времени
+                self.add_error('end_time', 'Время окончания должно быть больше или равно времени начала.')
+                
+        # 3. Дополнительная проверка на заполненность текста (если время указано)
+        text = cleaned_data.get('text')
+        if (start_time is not None or end_time is not None) and not text:
+             # Если время есть, текст должен быть.
+             self.add_error('text', 'Текст субтитра не может быть пустым, если указано время.')
+
+
+        return cleaned_data
+
+# Создаем фабрику формсетов
+# Extra=3: Добавляем 3 пустые строки для новых субтитров.
+SubtitleLineFormSet = inlineformset_factory(
+    parent_model=SubtitleSet, 
+    model=SubtitleLine, 
+    form=SubtitleLineForm,
+    fields=['id', 'start_time', 'end_time', 'text', 'name', 'style'],
+    extra=3, # <-- ИЗМЕНЕНИЕ: Добавляем 3 пустые формы для добавления
+    can_delete=True
+)
