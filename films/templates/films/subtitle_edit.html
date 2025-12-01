@@ -35,12 +35,66 @@
     </div>
 
     {# ----------------------------------------------------------- #}
-    {#                 3. ОСНОВНАЯ ФОРМА РЕДАКТИРОВАНИЯ            #}
+    {#               3. ФОРМА РЕДАКТИРОВАНИЯ СТИЛЕЙ (АККОРДЕОН)    #}
+    {# ----------------------------------------------------------- #}
+    {% if current_lang and style_form %}
+    <div class="accordion my-3" id="stylesAccordion">
+      <div class="accordion-item">
+        <h2 class="accordion-header" id="headingOne">
+          <button class="accordion-button {% if not style_form.errors %}collapsed{% endif %}"
+                  type="button"
+                  data-bs-toggle="collapse"
+                  data-bs-target="#collapseOne"
+                  aria-expanded="{% if style_form.errors %}true{% else %}false{% endif %}"
+                  aria-controls="collapseOne">
+            <i class="bi-palette me-2"></i> Редактировать карту цветов персонажей ({{ current_lang|upper }})
+            {% if style_form.errors %}<span class="badge bg-danger ms-2">Ошибки</span>{% endif %}
+          </button>
+        </h2>
+        <div id="collapseOne"
+             class="accordion-collapse collapse {% if style_form.errors %}show{% endif %}"
+             aria-labelledby="headingOne"
+             data-bs-parent="#stylesAccordion">
+          <div class="accordion-body">
+            <p class="text-muted">Задайте цвета для персонажей в формате **JSON-словаря**. Используйте точные имена персонажей, как они указаны в колонке "Спикер".</p>
+            <pre class="bg-light p-2 small">Пример: {"Дрисс": "#00FF00", "Филипп": "#FF0000"}</pre>
+
+            {# Форма отправляется на ту же view, но с параметром языка #}
+            <form method="post" action="{% url 'films:subtitle_edit' film.id %}?lang={{ current_lang }}" class="mt-3">
+                {% csrf_token %}
+
+                {# Скрытый инпут, который View использует для идентификации: сохраняем стили #}
+                <input type="hidden" name="save_styles" value="True">
+
+                {# Вывод полей формы стилей #}
+                {% for field in style_form %}
+                    <div class="mb-3">
+                        <label for="{{ field.id_for_label }}" class="form-label">{{ field.label }}</label>
+                        {{ field }}
+                        {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+                        {% if field.errors %}<div class="text-danger small">{{ field.errors }}</div>{% endif %}
+                    </div>
+                {% endfor %}
+
+                <button type="submit" class="btn btn-sm btn-success mt-3">
+                    <i class="bi-check-lg"></i> Сохранить карту цветов
+                </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# ----------------------------------------------------------- #}
+    {#                 4. ОСНОВНАЯ ФОРМА РЕДАКТИРОВАНИЯ (Строк)    #}
     {# ----------------------------------------------------------- #}
 
     {% if current_lang %}
     <form method="post" id="subtitle-form" class="mt-4">
         {% csrf_token %}
+
+        <p class="mb-3">Вы редактируете набор <b>{{ current_lang|upper }}</b>>. Используйте таблицу ниже для изменения текста, таймингов и стилей субтитров.</p>
 
         {# Обязательно выводим Management Form #}
         {{ formset.management_form }}
@@ -147,6 +201,7 @@
         const $tableBody = $('#subtitle-table tbody');
 
         // ⚡ КОРРЕКТНЫЙ СЕЛЕКТОР для счетчика формсет (линий субтитров)
+        // Используем префикс 'lines' из views.py
         const $totalFormsInput = $('#id_lines-TOTAL_FORMS');
 
         // HTML для пустой формы (шаблон)
@@ -171,13 +226,13 @@
 
             // 4. Обновляем нумерацию в первой ячейке новой строки
             const $newRow = $tableBody.find('tr').last();
-            // Заменяем временную заглушку __prefix_num___ на актуальный номер
+            // Заменяем временную заглушку __prefix_num___ на актуальный номер (1-индексированный)
             $newRow.find('td:first').text(currentTotalForms + 1);
 
             // Очищаем форму от класса table-danger
             $newRow.removeClass('table-danger');
 
-            // 5. Фикс для слэшей в JSON
+            // 5. Фикс для слэшей в JSON (часто требуется при использовании filter escapejs)
             const $styleField = $newRow.find('textarea[name$="-style"]');
             if ($styleField.length && $styleField.val().includes('\\"')) {
                 $styleField.val($styleField.val().replace(/\\"/g, '"'));

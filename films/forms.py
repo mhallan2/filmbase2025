@@ -1,3 +1,4 @@
+import json
 from django import forms
 from django.forms import inlineformset_factory, BaseInlineFormSet
 from dal import autocomplete
@@ -109,6 +110,44 @@ class SubtitleSetSelectForm(forms.Form):
     )
     # Используется только для создания нового набора
     is_new = forms.BooleanField(required=False, initial=False, widget=forms.HiddenInput)
+
+class SubtitleStyleForm(forms.ModelForm):
+    """Форма для редактирования карты цветов персонажей (JSONField)."""
+    class Meta:
+        model = SubtitleSet
+        # Используем правильное имя поля: speaker_color_map
+        fields = ['speaker_color_map']
+        widgets = {
+            'speaker_color_map': forms.Textarea(attrs={
+                'rows': 6,
+                'placeholder': '{"Driss": "#00FF00", "Phillipe": "#FF0000", ...}',
+                'class': 'form-control', # Добавляем класс Bootstrap
+            })
+        }
+
+    def clean_speaker_color_map(self):
+        """Валидация, что данные являются корректным JSON-словарем."""
+        data = self.cleaned_data.get('speaker_color_map')
+
+        # Если поле пустое, возвращаем пустой словарь (default=dict в модели)
+        if not data or not str(data).strip():
+            return {}
+
+        # Если данные пришли строкой, пытаемся распарсить
+        if isinstance(data, str):
+            try:
+                parsed_data = json.loads(data)
+            except json.JSONDecodeError:
+                raise forms.ValidationError('Некорректный формат JSON. Используйте словарь {"Имя": "#HEX_ЦВЕТ"}.')
+        else:
+            # Если это уже словарь (например, после неудачной первой валидации), используем его
+            parsed_data = data
+
+        # Проверяем, что это словарь
+        if not isinstance(parsed_data, dict):
+            raise forms.ValidationError('Данные должны быть в формате словаря JSON.')
+
+        return parsed_data
 
 # Создаем фабрику формсетов
 # Extra=3: Добавляем 3 пустые строки для новых субтитров.
