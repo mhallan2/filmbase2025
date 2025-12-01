@@ -1,0 +1,21 @@
+<tr class="{% if form.errors %}table-danger{% endif %}">
+    <td class="align-middle text-center">
+        {% if forloop %}{{ forloop.counter }}{% else %}__prefix_num___{% endif %}
+    </td>
+    
+    {# Скрытые поля (ID, ORDER, MANAGEMENT) #}
+    {% for hidden in form.hidden_fields %}{{ hidden }}{% endfor %}
+    
+    <td title="Начало">{{ form.start_time }}</td>
+    <td title="Конец">{{ form.end_time }}</td>
+    <td>
+        {{ form.text }}
+        {% if form.text.errors %}<div class="text-danger small">{{ form.text.errors }}</div>{% endif %}
+    </td>
+    <td>{{ form.name }}</td>
+    <td>
+        {{ form.style }}
+        {% if form.style.errors %}<div class="text-danger small">{{ form.style.errors }}</div>{% endif %}
+    </td>
+    <td class="align-middle text-center">{{ form.DELETE }}</td>
+</tr>
