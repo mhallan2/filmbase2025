@@ -98,6 +98,18 @@ class SubtitleLineForm(forms.ModelForm):
 
         return cleaned_data
 
+# Новая форма для выбора или создания набора субтитров
+class SubtitleSetSelectForm(forms.Form):
+    # Это поле не будет привязано к модели
+    language_code = forms.CharField(
+        max_length=2,
+        required=True,
+        label='Код языка (например, ru, en, fr)',
+        widget=forms.TextInput(attrs={'placeholder': 'ru, en, fr'})
+    )
+    # Используется только для создания нового набора
+    is_new = forms.BooleanField(required=False, initial=False, widget=forms.HiddenInput)
+
 # Создаем фабрику формсетов
 # Extra=3: Добавляем 3 пустые строки для новых субтитров.
 SubtitleLineFormSet = inlineformset_factory(

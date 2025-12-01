@@ -171,7 +171,7 @@
                   const editLink = document.getElementById('edit-subtitles-link'); // <-- NEW: Получаем ссылку на кнопку
                   const defaultLang = '{{ default_lang }}';
                   const vttUrlTemplate = "{% url 'films:get_subtitles' film_id=film.id language_code='LANGUAGE_PLACEHOLDER' %}";
-                  const editUrlTemplate = "{% url 'films:subtitle_edit' film_id=film.id lang_code='LANGUAGE_PLACEHOLDER' %}"; // <-- NEW: Шаблон URL для редактирования
+                  const editUrlTemplate = "{% url 'films:subtitle_edit' film_id=film.id %}?lang=LANGUAGE_PLACEHOLDER"; // <-- NEW: Шаблон URL для редактирования
 
                   // 1. Извлекаем ВСЕ карты цветов
                   const allStylesScript = document.getElementById('all-speaker-styles-data');

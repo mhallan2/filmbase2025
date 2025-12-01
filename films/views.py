@@ -2,7 +2,7 @@ from dal import autocomplete
 from django.shortcuts import get_object_or_404, redirect, render
 from django.contrib.auth.decorators import user_passes_test
 from .models import Country, Film, Genre, Person, SubtitleSet
-from .forms import CountryForm, GenreForm, FilmForm, PersonForm, SubtitleLineFormSet
+from .forms import CountryForm, GenreForm, FilmForm, PersonForm, SubtitleLineFormSet, SubtitleSetSelectForm
 from .helpers import paginate
 from django.contrib import messages
 from django.http import HttpResponse, Http404
@@ -353,43 +353,79 @@ def get_subtitles(request, film_id, language_code):
     return HttpResponse(vtt_content, content_type="text/vtt; charset=utf-8")
 
 @user_passes_test(check_admin)
-def subtitle_edit(request, film_id, lang_code):
-    """
-    Представление для редактирования строк субтитров с помощью Formset.
-    """
-    # 1. Загружаем родительский объект (Film и SubtitleSet)
+def subtitle_edit(request, film_id):
     film = get_object_or_404(Film, id=film_id)
-    
-    try:
-        # Находим конкретный набор субтитров по языку
-        subtitle_set = SubtitleSet.objects.get(film=film, language__iexact=lang_code)
-    except SubtitleSet.DoesNotExist:
-        messages.error(request, f'Набор субтитров для языка "{lang_code}" не найден.')
-        return redirect('films:film_detail', id=film_id)
-    
-    # 2. Инициализируем Formset
-    # instance=subtitle_set привязывает формсет к существующему набору субтитров
-    formset = SubtitleLineFormSet(request.POST or None, instance=subtitle_set)
 
-    # 3. Обработка POST-запроса (Сохранение)
+    # 1. Загружаем все доступные языки для этого фильма
+    available_sets = SubtitleSet.objects.filter(film=film).order_by('language')
+    available_languages = [s.language for s in available_sets]
+
+    # Определяем текущий язык для редактирования
+    current_lang = request.GET.get('lang', available_languages[0] if available_languages else None)
+
+    subtitle_set = None
+    formset = None
+
+    if current_lang:
+        try:
+            subtitle_set = available_sets.get(language__iexact=current_lang)
+            # Инициализируем Formset для существующего набора
+            formset = SubtitleLineFormSet(request.POST or None, instance=subtitle_set)
+        except SubtitleSet.DoesNotExist:
+            # Если текущий язык не найден (например, был передан некорректно), игнорируем
+            pass
+
+    # --- Логика обработки POST-запроса ---
     if request.method == 'POST':
-        if formset.is_valid():
+        # A. Обработка переключения/создания (Форма SubtitleSetSelectForm)
+        if 'language_code' in request.POST:
+            select_form = SubtitleSetSelectForm(request.POST)
+            if select_form.is_valid():
+                new_lang = select_form.cleaned_data['language_code'].strip().lower()
+                is_new_request = select_form.cleaned_data.get('is_new', False)
+
+                # Попытка найти существующий набор
+                try:
+                    found_set = SubtitleSet.objects.get(film=film, language__iexact=new_lang)
+                    # Если нашли, просто переключаемся на него
+                    messages.info(request, f'Переключено на язык: {new_lang.upper()}')
+                    return redirect(f'{request.path}?lang={new_lang}')
+                except SubtitleSet.DoesNotExist:
+                    # Если не нашли и это запрос на создание
+                    if is_new_request:
+                        new_set = SubtitleSet.objects.create(film=film, language=new_lang)
+                        messages.success(request, f'Создан новый набор субтитров для языка: {new_lang.upper()}')
+                        return redirect(f'{request.path}?lang={new_lang}')
+
+        # B. Обработка сохранения Formset
+        elif formset and formset.is_valid():
             try:
-                # Сохраняем все формы в формсете (обновления, добавления, удаления)
                 formset.save()
-                messages.success(request, f'Субтитры ({lang_code}) для "{film.name}" успешно обновлены.')
-                # Перенаправляем обратно на страницу фильма
-                return redirect('films:film_detail', id=film_id)
+                messages.success(request, f'Субтитры ({current_lang}) успешно обновлены.')
+                return redirect('films:film_detail', id=film.id)
             except Exception as e:
-                 # Включая ошибки валидации JSON в поле 'style'
-                 messages.error(request, f'Ошибка при сохранении: {e}')
-        else:
+                messages.error(request, f'Ошибка при сохранении: {e}')
+        elif formset:
             messages.error(request, 'Обнаружены ошибки в форме. Пожалуйста, проверьте выделенные поля.')
 
     # 4. Рендеринг шаблона
+    # Если набора еще нет (т.е. фильм без субтитров), formset будет пуст.
+    # Создаем пустой Formset для рендеринга
+    if not subtitle_set:
+        SubtitleLineFormSet.extra = 1 # Добавим 1 пустую строку, чтобы было куда вводить
+        formset = SubtitleLineFormSet(instance=SubtitleSet(film=film))
+    else:
+        # Убедимся, что empty_form доступна
+        if not formset:
+            formset = SubtitleLineFormSet(instance=subtitle_set)
+
+    # Форма для переключения/добавления (не привязана к POST-данным)
+    select_form = SubtitleSetSelectForm(initial={'language_code': current_lang})
+
     return render(request, 'films/subtitle_edit.html', {
         'film': film,
-        'subtitle_set': subtitle_set,
         'formset': formset,
-        'language_code': lang_code,
+        'current_lang': current_lang,
+        'available_languages': available_languages,
+        'select_form': select_form,
     })
