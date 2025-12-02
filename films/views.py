@@ -1,12 +1,16 @@
 from dal import autocomplete
 from django.shortcuts import get_object_or_404, redirect, render
 from django.contrib.auth.decorators import user_passes_test
-from .models import Country, Film, Genre, Person, SubtitleSet
-from .forms import CountryForm, GenreForm, FilmForm, PersonForm, SubtitleLineFormSet, SubtitleSetSelectForm, SubtitleStyleForm
+from .models import Country, Film, Genre, Person, SubtitleSet, SubtitleLine # <-- Добавлен SubtitleLine
+from .forms import CountryForm, GenreForm, FilmForm, PersonForm, SubtitleLineFormSet, SubtitleSetSelectForm, SpeakerColorFormSet
 from .helpers import paginate
 from django.contrib import messages
 from django.http import HttpResponse, Http404
+from collections import OrderedDict # <-- Для сохранения порядка в карте цветов
 
+# -----------------------------------------------------------------
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (без изменений)
+# -----------------------------------------------------------------
 
 def check_admin(user):
     return user.is_superuser
@@ -238,8 +242,9 @@ class CountryAutocomplete(autocomplete.Select2QuerySetView):
         return countries
 
 # -----------------------------------------------------------------
-# ОБНОВЛЕННАЯ ФУНКЦИЯ FILM_DETAIL
+# ФУНКЦИИ СВЯЗАННЫЕ С ФИЛЬМОМ И СУБТИТРАМИ (ОСНОВНЫЕ ИЗМЕНЕНИЯ ЗДЕСЬ)
 # -----------------------------------------------------------------
+
 def film_detail(request, id):
     # Добавляем prefetch для subtitle_sets для оптимизации
     queryset = Film.objects.prefetch_related("country", "genres", "director",
@@ -324,9 +329,9 @@ def get_subtitles(request, film_id, language_code):
         close_style_tags = ""
 
         # Проверяем, есть ли стили и классы в JSON-поле
-        if (line.style and isinstance(line.style, dict) 
+        if (line.style and isinstance(line.style, dict)
             and 'classes' in line.style and isinstance(line.style['classes'], list)):
-            
+
             # Итерируемся по списку классов (например, ["loud", "bold"])
             for class_name in line.style['classes']:
                 cleaned_class_name = class_name.strip()
@@ -352,6 +357,10 @@ def get_subtitles(request, film_id, language_code):
 
     return HttpResponse(vtt_content, content_type="text/vtt; charset=utf-8")
 
+# -----------------------------------------------------------------
+# КЛЮЧЕВАЯ ФУНКЦИЯ: SUBTITLE_EDIT (ПЕРЕРАБОТАНА ПОД PALETTE)
+# -----------------------------------------------------------------
+
 @user_passes_test(check_admin)
 def subtitle_edit(request, film_id):
     film = get_object_or_404(Film, id=film_id)
@@ -360,22 +369,64 @@ def subtitle_edit(request, film_id):
     available_sets = SubtitleSet.objects.filter(film=film).order_by('language')
     available_languages = [s.language for s in available_sets]
 
-    # Определяем текущий язык для редактирования (берем из GET-параметра или первый доступный)
+    # Определяем текущий язык для редактирования
     current_lang = request.GET.get('lang', available_languages[0] if available_languages else None)
 
     subtitle_set = None
     formset = None
-    style_form = None
+    style_formset = None
+    select_form = None # Инициализация для модального окна
 
     # 2. Инициализация существующих форм для текущего языка
     if current_lang:
         try:
             subtitle_set = available_sets.get(language__iexact=current_lang)
 
-            # ⚡ ИСПРАВЛЕНИЕ 1: Добавляем prefix='lines' для SubtitleLineFormSet.
-            # Это соответствует JS-селектору #id_lines-TOTAL_FORMS в вашем шаблоне.
+            # Формсет для строк субтитров
             formset = SubtitleLineFormSet(request.POST or None, instance=subtitle_set, prefix='lines')
-            style_form = SubtitleStyleForm(request.POST or None, instance=subtitle_set, prefix='styles')
+
+            # --- ЛОГИКА ФОРМСЕТА ДЛЯ КАРТЫ ЦВЕТОВ ---
+
+            # A. Получаем все уникальные имена из строк субтитров
+            unique_names_qs = SubtitleLine.objects.filter(
+                subtitle_set=subtitle_set
+            ).exclude(
+                name__isnull=True
+            ).exclude(
+                name__exact=''
+            ).values_list('name', flat=True).distinct()
+
+            unique_names = set(unique_names_qs)
+
+            # B. Объединение имен: Сначала существующие (для порядка), затем новые
+            current_styles = subtitle_set.speaker_color_map or {}
+            combined_names = OrderedDict()
+
+            # Добавляем существующие имена (с цветами)
+            for name, color in current_styles.items():
+                combined_names[name] = color
+
+            # Добавляем новые уникальные имена, которых еще нет в карте
+            for name in unique_names:
+                if name not in combined_names:
+                    combined_names[name] = '#ffffff' # Устанавливаем белый по умолчанию для новых
+
+            # C. Преобразование в формат initial данных для Formset
+            initial_styles_data = []
+            for name, color in combined_names.items():
+                initial_styles_data.append({
+                    'speaker_name': name,
+                    'color_hex': color
+                })
+
+            # D. Инициализация Formset стилей
+            is_style_post = request.method == 'POST' and request.POST.get('save_styles') == 'True'
+            style_formset = SpeakerColorFormSet(
+                request.POST if is_style_post else None,
+                initial=initial_styles_data,
+                prefix='styles'
+            )
+
         except SubtitleSet.DoesNotExist:
             current_lang = None
             messages.error(request, f'Набор субтитров для языка "{request.GET.get("lang")}" не найден.')
@@ -383,49 +434,55 @@ def subtitle_edit(request, film_id):
     # --- Логика обработки POST-запроса ---
     if request.method == 'POST':
 
-        # A. Обработка сохранения стилей (отдельная форма)
-        if 'save_styles' in request.POST and subtitle_set:
-            # style_form уже проинициализирована с request.POST
-            if style_form and style_form.is_valid():
+        # A. Обработка сохранения стилей (Карта цветов)
+        if request.POST.get('save_styles') == 'True' and subtitle_set:
+            # style_formset уже проинициализирован с request.POST выше
+            if style_formset and style_formset.is_valid():
+                new_speaker_styles = {}
+                for form in style_formset:
+                    # Проверяем, не помечена ли форма на удаление и есть ли имя спикера
+                    if not form.cleaned_data.get('DELETE'):
+                        speaker = form.cleaned_data.get('speaker_name')
+                        color = form.cleaned_data.get('color_hex')
+
+                        # Сохраняем только валидные пары (имя и цвет)
+                        if speaker and color:
+                             # Если цвет белый, не сохраняем его явно, чтобы использовать дефолтный цвет текста
+                             if color.lower() != '#ffffff':
+                                new_speaker_styles[speaker.strip()] = color.upper()
+
                 try:
-                    style_form.save()
+                    # Сохраняем собранный JSON-словарь в SubtitleSet
+                    subtitle_set.speaker_color_map = new_speaker_styles
+                    subtitle_set.save()
                     messages.success(request, f'Карта цветов ({current_lang}) успешно обновлена.')
-                    # ⚡ ИСПРАВЛЕНИЕ 2: Корректное построение URL для редиректа с параметром lang.
-                    # Нельзя конкатенировать HttpResponseRedirect с f-строкой.
                     return redirect(f'{request.path}?lang={current_lang}')
                 except Exception as e:
-                    messages.error(request, f'Ошибка при сохранении стилей: {e}')
+                    messages.error(request, f'Ошибка при сохранении карты цветов: {e}')
             else:
-                messages.error(request, 'Обнаружены ошибки в форме стилей. Пожалуйста, проверьте формат JSON.')
+                messages.error(request, 'Ошибка при сохранении карты цветов. Проверьте выделенные поля.')
+
 
         # B. Обработка переключения/создания нового набора (модальное окно)
         elif 'language_code' in request.POST:
             select_form = SubtitleSetSelectForm(request.POST)
-            # Флаг 'is_new' извлекается напрямую из POST, так как это скрытое поле, не входящее в select_form.cleaned_data.
             is_new_request = request.POST.get('is_new') == 'True'
 
             if select_form.is_valid():
-                new_lang = select_form.cleaned_data['language_code'].strip()
+                new_lang = select_form.cleaned_data['language_code'].strip().lower()
 
                 try:
-                    # Попытка найти существующий набор
                     SubtitleSet.objects.get(film=film, language__iexact=new_lang)
                     messages.info(request, f'Переключено на язык: {new_lang.upper()}')
                     return redirect(f'{request.path}?lang={new_lang}')
                 except SubtitleSet.DoesNotExist:
-                    # Если не нашли и это запрос на создание
                     if is_new_request:
                         new_set = SubtitleSet.objects.create(film=film, language=new_lang)
                         messages.success(request, f'Создан новый набор субтитров для языка: {new_lang.upper()}')
                         return redirect(f'{request.path}?lang={new_lang}')
-                    # else: Если не нашли и это не новый запрос (пользователь ввел несуществующий язык),
-                    # то просто продолжаем, и ошибки select_form будут показаны.
-
-            # Если select_form невалидна, мы продолжаем и рендерим страницу,
-            # чтобы показать ошибки в модальном окне.
+            # else: Ошибки select_form будут показаны при рендеринге (см. ниже)
 
         # C. Обработка сохранения Formset (строки субтитров)
-        # Эта ветка выполняется, если не сработали A (стили) и не сработала B (добавление языка).
         elif formset and formset.is_valid():
             try:
                 formset.save()
@@ -438,28 +495,23 @@ def subtitle_edit(request, film_id):
 
     # 3. Финальная инициализация форм для рендеринга (GET или POST с ошибкой)
 
-    # Инициализируем select_form для модального окна, если она не была привязана в POST.
-    # Если select_form была привязана и содержала ошибки (случай B), она сохранится с ошибками.
-    if 'language_code' not in request.POST:
-        select_form = SubtitleSetSelectForm(initial={'language_code': current_lang})
+    # Инициализируем select_form для модального окна
+    if not select_form:
+        select_form = SubtitleSetSelectForm(initial={'language_code': current_lang or 'ru'})
 
-    # ⚡ ИСПРАВЛЕНИЕ 3: Более чистая обработка случая, когда субтитров нет.
+    # Если subtitle_set не существует, инициализируем пустые формсеты
     if not subtitle_set:
-        # ⚠️ Избегаем SubtitleLineFormSet.extra = 1, чтобы не менять класс глобально.
         # Создаем пустой формсет, привязанный к новому временному SubtitleSet.
         formset = SubtitleLineFormSet(instance=SubtitleSet(film=film), prefix='lines')
-        style_form = SubtitleStyleForm(prefix='styles')
-
-    # Убеждаемся, что style_form инициализирована, даже если нет subtitle_set
-    if not style_form:
-        style_form = SubtitleStyleForm(prefix='styles')
+        # Создаем пустой формсет стилей
+        style_formset = SpeakerColorFormSet(prefix='styles')
 
 
     # 4. Рендеринг шаблона
     return render(request, 'films/subtitle_edit.html', {
         'film': film,
         'formset': formset,
-        'style_form': style_form,  # ⚡ ИСПРАВЛЕНИЕ 4: Добавляем style_form в контекст.
+        'style_formset': style_formset,
         'current_lang': current_lang,
         'available_languages': available_languages,
         'select_form': select_form,

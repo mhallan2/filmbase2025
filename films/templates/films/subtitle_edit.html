@@ -37,27 +37,26 @@
     {# ----------------------------------------------------------- #}
     {#               3. ФОРМА РЕДАКТИРОВАНИЯ СТИЛЕЙ (АККОРДЕОН)    #}
     {# ----------------------------------------------------------- #}
-    {% if current_lang and style_form %}
+    {% if current_lang and style_formset %}
     <div class="accordion my-3" id="stylesAccordion">
       <div class="accordion-item">
         <h2 class="accordion-header" id="headingOne">
-          <button class="accordion-button {% if not style_form.errors %}collapsed{% endif %}"
+          <button class="accordion-button {% if not style_formset.errors %}collapsed{% endif %}"
                   type="button"
                   data-bs-toggle="collapse"
                   data-bs-target="#collapseOne"
-                  aria-expanded="{% if style_form.errors %}true{% else %}false{% endif %}"
+                  aria-expanded="{% if style_formset.errors %}true{% else %}false{% endif %}"
                   aria-controls="collapseOne">
             <i class="bi-palette me-2"></i> Редактировать карту цветов персонажей ({{ current_lang|upper }})
-            {% if style_form.errors %}<span class="badge bg-danger ms-2">Ошибки</span>{% endif %}
+            {% if style_formset.errors %}<span class="badge bg-danger ms-2">Ошибки</span>{% endif %}
           </button>
         </h2>
         <div id="collapseOne"
-             class="accordion-collapse collapse {% if style_form.errors %}show{% endif %}"
+             class="accordion-collapse collapse {% if style_formset.errors %}show{% endif %}"
              aria-labelledby="headingOne"
              data-bs-parent="#stylesAccordion">
           <div class="accordion-body">
-            <p class="text-muted">Задайте цвета для персонажей в формате **JSON-словаря**. Используйте точные имена персонажей, как они указаны в колонке "Спикер".</p>
-            <pre class="bg-light p-2 small">Пример: {"Дрисс": "#00FF00", "Филипп": "#FF0000"}</pre>
+            <p class="text-muted">Настройте цвета для каждого персонажа, обнаруженного в субтитрах. Имена автоматически извлекаются из колонки "Спикер". Установка цвета в белый (#FFFFFF) или отметка "Сбросить/Удалить" удаляет имя из карты цветов.</p>
 
             {# Форма отправляется на ту же view, но с параметром языка #}
             <form method="post" action="{% url 'films:subtitle_edit' film.id %}?lang={{ current_lang }}" class="mt-3">
@@ -66,15 +65,63 @@
                 {# Скрытый инпут, который View использует для идентификации: сохраняем стили #}
                 <input type="hidden" name="save_styles" value="True">
 
-                {# Вывод полей формы стилей #}
-                {% for field in style_form %}
-                    <div class="mb-3">
-                        <label for="{{ field.id_for_label }}" class="form-label">{{ field.label }}</label>
-                        {{ field }}
-                        {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
-                        {% if field.errors %}<div class="text-danger small">{{ field.errors }}</div>{% endif %}
+                {# Management Form для формсета #}
+                {{ style_formset.management_form }}
+
+                {# ⚡ ВЫВОД ФОРМСЕТА СТИЛЕЙ #}
+                {% if style_formset %}
+                <div class="table-responsive">
+                    <table class="table table-sm table-borderless">
+                        <thead>
+                            <tr>
+                                <th scope="col" style="width: 30%;">Имя спикера</th>
+                                <th scope="col" style="width: 50%;">Цвет</th>
+                                <th scope="col" style="width: 20%;">Сбросить</th>
+                            </tr>
+                        </thead>
+                        <tbody id="style-formset-body">
+                        {% for form in style_formset %}
+                            <tr class="{% if form.errors %}table-danger{% endif %}" data-speaker-name="{{ form.speaker_name.value|default_if_none:'' }}">
+
+                                {# Скрытое поле speaker_name #}
+                                {{ form.speaker_name }}
+                                {# Скрытое поле id (если бы был ModelForm) #}
+                                {% for hidden in form.hidden_fields %}{{ hidden }}{% endfor %}
+
+                                <td class="align-middle fw-bold">
+                                    {# Отображаем label, который устанавливается в SpeakerColorBaseForm #}
+                                    {# ⚡ ИСПРАВЛЕНИЕ LABEL: Оборачиваем текст в тег <label> и связываем с input #}
+                                    <label for="{{ form.color_hex.id_for_label }}">
+                                        {{ form.color_hex.label }}
+                                    </label>
+                                </td>
+
+                                <td class="align-middle d-flex align-items-center">
+                                    {{ form.color_hex }}
+                                    {% if form.color_hex.errors %}<div class="text-danger small">{{ form.color_hex.errors }}</div>{% endif %}
+                                </td>
+
+                                <td class="align-middle">
+                                    {# Поле DELETE и кнопка для сброса/удаления #}
+                                    <div class="form-check">
+                                        {{ form.DELETE }}
+                                        <label class="form-check-label text-muted" for="{{ form.DELETE.id_for_label }}">Сбросить/Удалить</label>
+                                    </div>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                    {% if style_formset.non_field_errors %}
+                        <div class="alert alert-danger">{{ style_formset.non_field_errors }}</div>
+                    {% endif %}
+                </div>
+                {% else %}
+                    <div class="alert alert-info">
+                        Уникальные имена персонажей не найдены. Укажите "Спикера" хотя бы в одной строке субтитров.
                     </div>
-                {% endfor %}
+                {% endif %}
+                {# ---------------------------------------- #}
 
                 <button type="submit" class="btn btn-sm btn-success mt-3">
                     <i class="bi-check-lg"></i> Сохранить карту цветов
@@ -94,7 +141,7 @@
     <form method="post" id="subtitle-form" class="mt-4">
         {% csrf_token %}
 
-        <p class="mb-3">Вы редактируете набор <b>{{ current_lang|upper }}</b>>. Используйте таблицу ниже для изменения текста, таймингов и стилей субтитров.</p>
+        <p class="mb-3">Вы редактируете набор <b>{{ current_lang|upper }}</b>. Используйте таблицу ниже для изменения текста, таймингов и стилей субтитров.</p>
 
         {# Обязательно выводим Management Form #}
         {{ formset.management_form }}
@@ -162,13 +209,7 @@
           {% with language_field=select_form.language_code %}
             <div class="mb-3">
                 <label for="{{ language_field.id_for_label }}" class="form-label">{{ language_field.label }}</label>
-                <input type="{{ language_field.field.widget.input_type }}"
-                       class="form-control"
-                       id="{{ language_field.id_for_label }}"
-                       name="{{ language_field.name }}"
-                       maxlength="{{ language_field.field.max_length }}"
-                       placeholder="ru, en, fr"
-                       required>
+                {{ language_field }}
             </div>
           {% endwith %}
           {# Скрытое поле, сообщающее View о создании нового набора #}
@@ -197,14 +238,11 @@
     });
 
     $(document).ready(function() {
-        // Тело таблицы, куда будут добавляться строки
+        // --- ЛОГИКА ДЛЯ ФОРМСЕТА СТРОК СУБТИТРОВ ---
         const $tableBody = $('#subtitle-table tbody');
-
-        // ⚡ КОРРЕКТНЫЙ СЕЛЕКТОР для счетчика формсет (линий субтитров)
         // Используем префикс 'lines' из views.py
         const $totalFormsInput = $('#id_lines-TOTAL_FORMS');
 
-        // HTML для пустой формы (шаблон)
         const emptyFormHtml = `
             {% filter escapejs %}
                 {% include "films/includes/subtitle_form_row.html" with form=formset.empty_form forloop=null %}
@@ -212,7 +250,6 @@
         `;
 
         $('#add-subtitle-row').click(function() {
-            // Используем || 0 для защиты от NaN и пустых строк.
             const currentTotalForms = parseInt($totalFormsInput.val()) || 0;
 
             // 1. Копируем HTML пустой формы, заменяя заглушку на текущий индекс
@@ -232,12 +269,31 @@
             // Очищаем форму от класса table-danger
             $newRow.removeClass('table-danger');
 
-            // 5. Фикс для слэшей в JSON (часто требуется при использовании filter escapejs)
+            // 5. Фикс для слэшей в JSON
             const $styleField = $newRow.find('textarea[name$="-style"]');
             if ($styleField.length && $styleField.val().includes('\\"')) {
                 $styleField.val($styleField.val().replace(/\\"/g, '"'));
             }
         });
+
+        // --- ЛОГИКА ДЛЯ ФОРМСЕТА СТИЛЕЙ ---
+        // Обработка клика по чекбоксу "Сбросить/Удалить"
+        $('#style-formset-body input[type="checkbox"][name$="-DELETE"]').change(function() {
+            const $row = $(this).closest('tr');
+            const $colorInput = $row.find('input[type="color"]');
+            const isChecked = $(this).is(':checked');
+
+            if (isChecked) {
+                // Если отмечено, делаем строку бледной и устанавливаем значение по умолчанию (белый)
+                $row.addClass('text-muted');
+                $colorInput.val('#ffffff');
+                $colorInput.prop('disabled', true); // Отключаем ввод цвета
+            } else {
+                // Если снято, восстанавливаем
+                $row.removeClass('text-muted');
+                $colorInput.prop('disabled', false);
+            }
+        }).trigger('change'); // Запускаем при загрузке страницы для первоначальной стилизации
     });
 </script>
 

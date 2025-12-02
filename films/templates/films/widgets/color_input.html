@@ -1,0 +1,11 @@
+<input type="{{ widget.type }}"
+       name="{{ widget.name }}"
+           {% if widget.value != None %}value="{{ widget.value|stringformat:'s' }}"{% endif %}
+       {% for name, value in widget.attrs.items %}
+           {% if name != 'id' and name != 'type' and name != 'name' %}
+               {% if value is True %} {{ name }}
+               {% elif value is not False %} {{ name }}="{{ value|stringformat:'s' }}"{% endif %}
+           {% endif %}
+       {% endfor %}
+       {# id выводим последним или через цикл, если он не в исключениях, но для надежности лучше явно: #}
+       {% if widget.attrs.id %}id="{{ widget.attrs.id }}"{% elif widget.id %}id="{{ widget.id }}"{% endif %}>
