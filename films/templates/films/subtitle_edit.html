@@ -32,6 +32,38 @@
                 <i class="bi-plus-lg"></i> Добавить язык
             </button>
         </div>
+
+        <div class="d-flex justify-content-end mb-3">
+            <button
+                type="button"
+                class="btn btn-danger ms-2"
+                data-bs-toggle="modal"
+                data-bs-target="#deleteSubtitlesModal"
+            >
+                <i class="bi-trash"></i>
+                Удалить субтитры ({{ current_lang }})
+            </button>
+        </div>
+
+        <div class="modal fade" id="deleteSubtitlesModal" tabindex="-1" aria-labelledby="deleteSubtitlesModalLabel" aria-hidden="true">
+          <div class="modal-dialog">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title" id="deleteSubtitlesModalLabel">Подтверждение удаления</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+              </div>
+              <div class="modal-body">
+                  Вы уверены, что хотите удалить все субтитры для языка <b>{{ current_lang }}</b>? Это действие необратимо!
+              </div>
+              <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-danger" id="confirm-delete-subtitles">
+                    Удалить
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
     </div>
 
     {# ----------------------------------------------------------- #}
@@ -206,8 +238,8 @@
         </div>
         <div class="modal-body">
           <p>Введите двухбуквенный код языка (ISO 639-1).</p>
-          {# Выводим поле language_code из select_form #}
-          {% with language_field=select_form.language_code %}
+          {# Выводим поле language из select_form #}
+          {% with language_field=select_form.language %}
             <div class="mb-3">
                 <label for="{{ language_field.id_for_label }}" class="form-label">{{ language_field.label }}</label>
                 {{ language_field }}
@@ -229,6 +261,55 @@
 {#               БЛОК JAVASCRIPT                               #}
 {# ----------------------------------------------------------- #}
 <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const confirmDeleteBtn = document.getElementById('confirm-delete-subtitles');
+        const deleteModalElement = document.getElementById('deleteSubtitlesModal');
+
+        // Проверка наличия Bootstrap, если вы используете BS5+
+        const deleteModal = new bootstrap.Modal(deleteModalElement);
+
+        if (confirmDeleteBtn) {
+            confirmDeleteBtn.addEventListener('click', () => {
+
+                // Получаем необходимые данные из контекста Django
+                const filmId = "{{ film.id }}";
+                const langCode = "{{ current_lang }}";
+
+                // Формируем URL для удаления
+                const deleteUrlTemplate = "{% url 'films:delete_subtitles' film_id=0 language='LANGUAGE_PLACEHOLDER' %}";
+                const deleteUrl = deleteUrlTemplate
+                    .replace('0', filmId)
+                    .replace('LANGUAGE_PLACEHOLDER', langCode);
+
+                // Отправка AJAX-запроса
+                fetch(deleteUrl, {
+                    method: 'POST',
+                    headers: {
+                        // Важно для Django: получаем CSRF-токен
+                        'X-CSRFToken': '{{ csrf_token }}',
+                        'Content-Type': 'application/json'
+                    }
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        alert(`Ошибка удаления: ${data.error}`);
+                    } else {
+                        alert(`Успешно: ${data.message}`);
+                        deleteModal.hide();
+
+                        // Перенаправляем пользователя обратно на страницу фильма
+                        window.location.href = "{% url 'films:film_detail' film.id %}";
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    alert('Произошла ошибка при отправке запроса на удаление.');
+                });
+            });
+        }
+    });
+
     // JS для переключения языка при выборе из <select>
     document.getElementById('language-select').addEventListener('change', function() {
         const selectedLang = this.value;

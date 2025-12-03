@@ -40,7 +40,7 @@ urlpatterns = [
     path('people/autocomplete/',
          views.PersonAutocomplete.as_view(), name='person_autocomplete'),
     path(
-        'films/<int:film_id>/subtitles/<str:language_code>.vtt',
+        'films/<int:film_id>/subtitles/<str:language>.vtt',
         views.get_subtitles,
         name='get_subtitles'
     ),
@@ -48,5 +48,10 @@ urlpatterns = [
         'films/<int:film_id>/subtitles/edit/',
         views.subtitle_edit,
         name='subtitle_edit'
+    ),
+    path(
+        'films/<int:film_id>/subtitles/delete/<str:language>/',
+        views.delete_subtitles,
+        name='delete_subtitles'
     ),
 ]

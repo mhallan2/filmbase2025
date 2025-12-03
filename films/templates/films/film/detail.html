@@ -183,7 +183,7 @@
                   const fullscreenIcon = fullscreenBtn ? fullscreenBtn.querySelector('i') : null;
 
                   const defaultLang = '{{ default_lang }}';
-                  const vttUrlTemplate = "{% url 'films:get_subtitles' film_id=film.id language_code='LANGUAGE_PLACEHOLDER' %}";
+                  const vttUrlTemplate = "{% url 'films:get_subtitles' film_id=film.id language='LANGUAGE_PLACEHOLDER' %}";
                   const editUrlTemplate = "{% url 'films:subtitle_edit' film_id=film.id %}?lang=LANGUAGE_PLACEHOLDER";
 
                   // 1. Извлекаем ВСЕ карты цветов

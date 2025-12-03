@@ -1,11 +1,12 @@
 from dal import autocomplete
 from django.shortcuts import get_object_or_404, redirect, render
 from django.contrib.auth.decorators import user_passes_test
+from django.views.decorators.http import require_POST
 from .models import Country, Film, Genre, Person, SubtitleSet, SubtitleLine # <-- Добавлен SubtitleLine
 from .forms import CountryForm, GenreForm, FilmForm, PersonForm, SubtitleLineFormSet, SubtitleSetSelectForm, SpeakerColorFormSet
 from .helpers import paginate
 from django.contrib import messages
-from django.http import HttpResponse, Http404
+from django.http import HttpResponse, Http404, JsonResponse
 from collections import OrderedDict # <-- Для сохранения порядка в карте цветов
 
 # -----------------------------------------------------------------
@@ -298,7 +299,7 @@ def format_time(seconds):
 # -----------------------------------------------------------------
 # ОБНОВЛЕННАЯ ФУНКЦИЯ GET_SUBTITLES (С ТЕГОМ <V ИМЯ> В ТЕКСТЕ)
 # -----------------------------------------------------------------
-def get_subtitles(request, film_id, language_code):
+def get_subtitles(request, film_id, language):
     """
     Отдает WebVTT файл по запросу клиента.
     Тег спикера <v Имя> добавляется в начало текста субтитра.
@@ -308,10 +309,10 @@ def get_subtitles(request, film_id, language_code):
         # Получаем набор субтитров с предварительной загрузкой строк
         subtitle_set = SubtitleSet.objects.prefetch_related('lines').get(
             film_id=film_id,
-            language__iexact=language_code
+            language__iexact=language
         )
     except SubtitleSet.DoesNotExist:
-        raise Http404(f"Набор субтитров ({language_code}) не найден.")
+        raise Http404(f"Набор субтитров ({language}) не найден.")
 
     vtt_content = "WEBVTT\n\n"
 
@@ -466,12 +467,12 @@ def subtitle_edit(request, film_id):
 
 
         # B. Обработка переключения/создания нового набора (модальное окно)
-        elif 'language_code' in request.POST:
+        elif 'language' in request.POST:
             select_form = SubtitleSetSelectForm(request.POST)
             is_new_request = request.POST.get('is_new') == 'True'
 
             if select_form.is_valid():
-                new_lang = select_form.cleaned_data['language_code'].strip().lower()
+                new_lang = select_form.cleaned_data['language'].strip().lower()
 
                 try:
                     SubtitleSet.objects.get(film=film, language__iexact=new_lang)
@@ -499,7 +500,7 @@ def subtitle_edit(request, film_id):
 
     # Инициализируем select_form для модального окна
     if not select_form:
-        select_form = SubtitleSetSelectForm(initial={'language_code': current_lang or 'ru'})
+        select_form = SubtitleSetSelectForm(initial={'language': current_lang or 'ru'})
 
     # Если subtitle_set не существует, инициализируем пустые формсеты
     if not subtitle_set:
@@ -518,3 +519,36 @@ def subtitle_edit(request, film_id):
         'available_languages': available_languages,
         'select_form': select_form,
     })
+
+@require_POST
+def delete_subtitles(request, film_id, language):
+    if not request.user.is_superuser:
+        return JsonResponse({'error': 'Доступ запрещен.'}, status=403)
+
+    film = get_object_or_404(Film, pk=film_id)
+
+    try:
+        # ШАГ 1: Находим SubtitleSet
+        subtitle_set = get_object_or_404(
+            SubtitleSet,
+            film=film,
+            language=language
+        )
+
+        # ШАГ 2: Удаляем SubtitleLine (строки)
+        deleted_count, details = SubtitleLine.objects.filter(
+            subtitle_set=subtitle_set
+        ).delete()
+
+        # ШАГ 3: Удаляем сам SubtitleSet (чтобы язык исчез из выбора)
+        SubtitleSet.objects.filter(pk=subtitle_set.pk).delete()
+
+        return JsonResponse({'message': f'удалено {deleted_count} строк субтитров для языка {language}.'}, status=200)
+
+    except SubtitleSet.DoesNotExist:
+        return JsonResponse({'error': f'Субтитры для языка {language} не найдены.'}, status=404)
+
+    except Exception as e:
+        # Если здесь появляется "Cannot resolve keyword 'film'",
+        # значит ошибка ГДЕ-ТО ЕЩЕ, а не в этой функции.
+        return JsonResponse({'error': f'Внутренняя ошибка сервера: {str(e)}'}, status=500)

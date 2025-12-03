@@ -180,9 +180,9 @@ SpeakerColorFormSet = forms.formset_factory(
 # --- ФОРМА ДЛЯ МОДАЛЬНОГО ОКНА (SubtitleSetSelectForm) ---
 class SubtitleSetSelectForm(forms.Form):
     """Форма для выбора/создания языка субтитров в модальном окне."""
-    language_code = forms.CharField(
-        label='Код языка (ISO 639-1)',
-        max_length=10,
+    language = forms.CharField(
+        label='Код языка',
+        max_length=2,
         required=True,
         validators=[MinLengthValidator(2)],
         widget=forms.TextInput(attrs={'placeholder': 'ru, en, fr', 'class': 'form-control'})
