@@ -162,8 +162,8 @@ class SubtitleSet(MyModel):
 
             vtt_lines.append(vtt_cue_line) # <-- Заголовок метки
 
-            # 2. Извлечение имени спикера (используем 'speaker' из JSON style)
-            speaker_name = style_data.get('speaker')
+            # 2. Извлечение имени спикера
+            speaker_name = line.name
 
             # Инициализируем контент текста
             text_content = line.text
@@ -231,11 +231,7 @@ class SubtitleLine(MyModel):
         return f"[{self.start_time:.2f}] {self.text[:40]}..."
 
     def save(self, *args, **kwargs):
-        if self.name:
-            if self.style is None:
-                self.style = {}
-            self.style['speaker'] = self.name
-        elif self.style and 'speaker' in self.style:
-            # Если поле name очищено, удаляем его из JSON
-            del self.style['speaker']
+        if self.style is None:
+            self.style = {'classes': []}
+
         super().save(*args, **kwargs)
