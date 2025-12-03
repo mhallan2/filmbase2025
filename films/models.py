@@ -152,8 +152,6 @@ class SubtitleSet(MyModel):
             start_time = self.format_time(line.start_time * 1000)
             end_time = self.format_time(line.end_time * 1000)
 
-            style_data = line.style if line.style is not None else {}
-
             # 1. Формируем строку с таймингами
             vtt_cue_line = f"{start_time} --> {end_time}"
 
@@ -174,7 +172,7 @@ class SubtitleSet(MyModel):
                 text_content = f"<v {speaker_name}> {text_content.strip()}"
 
                 # 3. Собираем классы для отображения (VTT-стилизация)
-            custom_classes = style_data.get('classes', [])
+            custom_classes = line.style_classes.strip().split()
 
             # 4. Собираем финальный контент (обертывая текст и тег спикера в <c.класс>)
             if custom_classes:
@@ -218,7 +216,13 @@ class SubtitleLine(MyModel):
         null=True, blank=True
     )
 
-    style = JSONField(null=True, blank=True)
+    style_classes = models.CharField(
+        max_length=255,
+        default='',
+        blank=True,
+        verbose_name='Классы стилей CSS',
+        help_text='Классы через пробел, например: bold shadow'
+    )
 
     class Meta:
         verbose_name = 'Строка субтитра'
@@ -231,7 +235,4 @@ class SubtitleLine(MyModel):
         return f"[{self.start_time:.2f}] {self.text[:40]}..."
 
     def save(self, *args, **kwargs):
-        if self.style is None:
-            self.style = {'classes': []}
-
         super().save(*args, **kwargs)

@@ -1,11 +1,12 @@
 <tr class="{% if form.errors %}table-danger{% endif %}">
     <td class="align-middle text-center">
-        {% if forloop %}{{ forloop.counter }}{% endif %}
+        {# Используем forloop.counter для существующих форм или prefix для динамически добавленных #}
+        {% if forloop %}{{ forloop.counter }}{% else %}{{ form.prefix }}{% endif %}
     </td>
-    
+
     {# Скрытые поля (ID, ORDER, MANAGEMENT) #}
     {% for hidden in form.hidden_fields %}{{ hidden }}{% endfor %}
-    
+
     <td title="Начало">{{ form.start_time }}</td>
     <td title="Конец">{{ form.end_time }}</td>
     <td>
@@ -13,9 +14,23 @@
         {% if form.text.errors %}<div class="text-danger small">{{ form.text.errors }}</div>{% endif %}
     </td>
     <td>{{ form.name }}</td>
-    <td>
-        {{ form.style }}
-        {% if form.style.errors %}<div class="text-danger small">{{ form.style.errors }}</div>{% endif %}
+
+    {# ✅ ИСПРАВЛЕНИЕ: Заменяем form.style на form.mapped_classes и form.style_classes #}
+    <td class="align-middle">
+        {# Отображаем чекбоксы (немодельное поле) #}
+        {{ form.mapped_classes }}
+
+        {# Отображаем скрытое модельное поле, которое заполняется методом clean() #}
+        {{ form.style_classes }}
+
+        {# Вывод ошибок: лучше привязать их к полю mapped_classes, которое видит пользователь #}
+        {% if form.mapped_classes.errors %}<div class="text-danger small">{{ form.mapped_classes.errors }}</div>{% endif %}
     </td>
-    <td class="align-middle text-center">{{ form.DELETE }}</td>
+
+    <td class="align-middle text-center">
+        {# Чекбокс "Удалить" #}
+        <div class="form-check form-check-inline">
+             {{ form.DELETE }}
+        </div>
+    </td>
 </tr>

@@ -43,29 +43,42 @@ class PersonForm(forms.ModelForm):
                                         format="%Y-%m-%d")
         }
 
+STYLE_CHOICES = (
+    ('bold', 'Жирный'),
+    ('italic', 'Курсив'),
+    ('loud', 'Крик'),
+    # Добавьте другие классы
+)
 
 class SubtitleLineForm(forms.ModelForm):
+    mapped_classes = forms.MultipleChoiceField(
+        required=False,
+        choices=STYLE_CHOICES,
+        widget=forms.CheckboxSelectMultiple,
+        label='Стили текста'
+    )
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        # 1. Проверяем, что это новая форма (нет id)
-        # 2. Проверяем, что поле style еще не имеет значения
-        if self.instance.pk is None and not self.initial.get('style'):
-            # ⚡ ГЛАВНОЕ ИСПРАВЛЕНИЕ:
-            # Указываем значение как СТРОКУ, а не как словарь.
-            # Это гарантирует, что в <textarea> попадет именно этот текст.
-            self.initial['style'] = {"classes": []}
+        # 1. Заполняем чекбоксы данными из БД
+        if self.instance.pk and self.instance.style_classes:
+            initial_classes = self.instance.style_classes.split()
+            self.fields['mapped_classes'].initial = initial_classes
+
+        # 2. Скрываем модельное поле style_classes, так как его заполняет clean()
+        self.fields['style_classes'].widget = forms.HiddenInput()
 
     """Форма для редактирования одной строки субтитра с пользовательской валидацией."""
     class Meta:
         model = SubtitleLine
-        fields = ['id', 'start_time', 'end_time', 'text', 'name', 'style']
+        # ✅ ИЗМЕНЕНИЕ: Заменяем 'style' на 'style_classes'
+        fields = ['id', 'start_time', 'end_time', 'text', 'name', 'style_classes']
         widgets = {
             'start_time': forms.TextInput(attrs={'class': 'form-control form-control-sm', 'type': 'number', 'step': '0.001'}),
             'end_time': forms.TextInput(attrs={'class': 'form-control form-control-sm', 'type': 'number', 'step': '0.001'}),
             'text': forms.Textarea(attrs={'class': 'form-control form-control-sm', 'rows': 2}),
             'name': forms.TextInput(attrs={'class': 'form-control form-control-sm'}),
-            'style': forms.Textarea(attrs={'class': 'form-control form-control-sm', 'rows': 2, 'placeholder': '{"class_name": "value"}'}),
         }
 
     def clean(self):
@@ -73,7 +86,14 @@ class SubtitleLineForm(forms.ModelForm):
         start_time = cleaned_data.get('start_time')
         end_time = cleaned_data.get('end_time')
 
-        # Если форма помечена на удаление, дальнейшая валидация не нужна
+        # 1. ✅ НОВОЕ: Преобразуем список из чекбоксов в строку для БД
+        selected_classes = cleaned_data.get('mapped_classes', [])
+        cleaned_data['style_classes'] = " ".join(selected_classes)
+
+        # 2. Удаляем временное поле, чтобы оно не попало в модель (хотя Django его игнорирует)
+        del cleaned_data['mapped_classes']
+
+        # 3. Валидация времени (остается без изменений)
         if cleaned_data.get('DELETE'):
             return cleaned_data
 
@@ -104,7 +124,7 @@ SubtitleLineFormSet = inlineformset_factory(
     parent_model=SubtitleSet,
     model=SubtitleLine,
     form=SubtitleLineForm,
-    fields=['id', 'start_time', 'end_time', 'text', 'name', 'style'],
+    fields=['id', 'start_time', 'end_time', 'text', 'name', 'style_classes'], # ✅ ИЗМЕНЕНИЕ
     extra=0,
     can_delete=True
 )

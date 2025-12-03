@@ -156,7 +156,8 @@
                         <th scope="col" style="width: 8%;">Конец (с)</th>
                         <th scope="col" style="width: 35%;">Текст субтитра</th>
                         <th scope="col" style="width: 15%;">Спикер</th>
-                        <th scope="col" style="width: 20%;">Стили (JSON)</th>
+                        {# 🛑 ИЗМЕНЕНИЕ: Заменяем "Стили (JSON)" на "Стили (Чекбоксы)" #}
+                        <th scope="col" style="width: 20%;">Стили (Чекбоксы)</th>
                         <th scope="col" style="width: 6%;">Удалить</th>
                     </tr>
                 </thead>
@@ -243,6 +244,7 @@
         // Используем префикс 'lines' из views.py
         const $totalFormsInput = $('#id_lines-TOTAL_FORMS');
 
+        // ВАЖНО: emptyFormHtml теперь будет содержать чекбоксы
         const emptyFormHtml = `
             {% filter escapejs %}
                 {% include "films/includes/subtitle_form_row.html" with form=formset.empty_form forloop=null %}
@@ -269,14 +271,12 @@
             // Очищаем форму от класса table-danger
             $newRow.removeClass('table-danger');
 
-            // 5. Фикс для слэшей в JSON
-            const $styleField = $newRow.find('textarea[name$="-style"]');
-            if ($styleField.length && $styleField.val().includes('\\"')) {
-                $styleField.val($styleField.val().replace(/\\"/g, '"'));
-            }
+            // 🛑 УДАЛЕНА ЛОГИКА ФИКСА ДЛЯ СЛЭШЕЙ В JSON
+            // так как поле style удалено и заменено на CharField
+
         });
 
-        // --- ЛОГИКА ДЛЯ ФОРМСЕТА СТИЛЕЙ ---
+        // --- ЛОГИКА ДЛЯ ФОРМСЕТА СТИЛЕЙ (Карта цветов) ---
         // Обработка клика по чекбоксу "Сбросить/Удалить"
         $('#style-formset-body input[type="checkbox"][name$="-DELETE"]').change(function() {
             const $row = $(this).closest('tr');

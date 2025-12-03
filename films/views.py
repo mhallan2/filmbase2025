@@ -324,22 +324,24 @@ def get_subtitles(request, film_id, language_code):
 
         text_to_write = line.text
 
-        # --- 2. ЛОГИКА ОБРАБОТКИ СТИЛЕЙ (классов) ---
         open_style_tags = ""
         close_style_tags = ""
 
-        # Проверяем, есть ли стили и классы в JSON-поле
-        if (line.style and isinstance(line.style, dict)
-            and 'classes' in line.style and isinstance(line.style['classes'], list)):
+        # --- 2. ЛОГИКА ОБРАБОТКИ СТИЛЕЙ (классов) ---
 
-            # Итерируемся по списку классов (например, ["loud", "bold"])
-            for class_name in line.style['classes']:
-                cleaned_class_name = class_name.strip()
-                if cleaned_class_name:
-                    # Создаем открывающий тег <c.className>
-                    open_style_tags += f"<c.{cleaned_class_name}>"
-                    # Создаем закрывающие теги в обратном порядке (LIFO)
-                    close_style_tags = "</c>" + close_style_tags
+        # 🛑 ЭТОТ БЛОК ДОЛЖЕН БЫТЬ ПЕРВЫМ И БЕЗ ВСЯКИХ IF, КРОМЕ ПРОВЕРКИ НАЛИЧИЯ КЛАССОВ!
+        custom_classes_string = line.style_classes.strip() # Всегда определяем переменную!
+
+        if custom_classes_string:
+            # Разделяем строку "bold shadow" на список ['bold', 'shadow']
+            custom_classes_list = custom_classes_string.split()
+
+            # Соединяем список в формат VTT: "class1.class2.class3"
+            class_string = ".".join(custom_classes_list)
+
+            # Определяем теги
+            open_style_tags = f"<c.{class_string}>"
+            close_style_tags = "</c>"
         # ---------------------------------------------
 
         # 3. Добавление тега спикера (<v Имя>)
