@@ -127,7 +127,7 @@
                     </select>
                 </div>
 
-                <div class="form-check form-switch mt-4">
+                <div class="form-check form-switch mt-4 me-3">
                     <input
                         class="form-check-input"
                         type="checkbox"
@@ -137,27 +137,34 @@
                     >
                 </div>
 
+                {# Кнопку отсюда убрали, она теперь внутри плеера #}
+
             </div>
             {% endif %}
 
-            <div
-                class="main-video-wrapper ratio ratio-16x9"
-                data-film-id="{{ film.id }}"
-            >
-                <iframe
-                    id="youtube-player"
-                    src="{{ film.trailer_url }}?enablejsapi=1"
-                    title="{{ film.name }}"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                    allowfullscreen
-                    style="width: 100%; height: 100%;"
-                ></iframe>
+            {# ✅ КОНТЕЙНЕР ПЛЕЕРА С КНОПКОЙ ВНУТРИ #}
+            <div class="main-video-wrapper" id="video-player-container">
+                {# Добавили &fs=0 чтобы скрыть нативную кнопку YouTube #}
+                <div class="ratio ratio-16x9">
+                    <iframe
+                        id="youtube-player"
+                        src="{{ film.trailer_url }}?enablejsapi=1&fs=0"
+                        title="{{ film.name }}"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowfullscreen
+                        style="width: 100%; height: 100%;"
+                    ></iframe>
+                </div>
 
                 <div id="custom-subtitle-overlay"></div>
+
+                {# ✅ КНОПКА ПОЛНОЭКРАННОГО РЕЖИМА ВНУТРИ КОНТЕЙНЕРА #}
+                <button id="custom-fullscreen-btn" class="btn btn-dark" type="button" title="На весь экран">
+                    <i class="bi bi-arrows-fullscreen"></i>
+                </button>
             </div>
 
             {# 2. ПЕРЕДАЕМ ВСЕ КАРТЫ ЦВЕТОВ В JS #}
-            {# Используем новую переменную all_speaker_color_maps #}
             {% if all_speaker_color_maps %}
             {{ all_speaker_color_maps|json_script:"all-speaker-styles-data" }}
             {% endif %}
@@ -167,11 +174,17 @@
             <script>
               (function() {
                   const select = document.getElementById('subtitle-language-select');
-                  const toggleSwitch = document.getElementById('subtitles-toggle'); 
-                  const editLink = document.getElementById('edit-subtitles-link'); // <-- NEW: Получаем ссылку на кнопку
+                  const toggleSwitch = document.getElementById('subtitles-toggle');
+                  const editLink = document.getElementById('edit-subtitles-link');
+
+                  // Элементы полного экрана
+                  const videoContainer = document.getElementById('video-player-container');
+                  const fullscreenBtn = document.getElementById('custom-fullscreen-btn');
+                  const fullscreenIcon = fullscreenBtn ? fullscreenBtn.querySelector('i') : null;
+
                   const defaultLang = '{{ default_lang }}';
                   const vttUrlTemplate = "{% url 'films:get_subtitles' film_id=film.id language_code='LANGUAGE_PLACEHOLDER' %}";
-                  const editUrlTemplate = "{% url 'films:subtitle_edit' film_id=film.id %}?lang=LANGUAGE_PLACEHOLDER"; // <-- NEW: Шаблон URL для редактирования
+                  const editUrlTemplate = "{% url 'films:subtitle_edit' film_id=film.id %}?lang=LANGUAGE_PLACEHOLDER";
 
                   // 1. Извлекаем ВСЕ карты цветов
                   const allStylesScript = document.getElementById('all-speaker-styles-data');
@@ -192,35 +205,29 @@
                       return;
                   }
 
-                  // --- NEW: ФУНКЦИЯ: Обновление ссылки на редактирование ---
+                  // --- ФУНКЦИЯ: Обновление ссылки на редактирование ---
                   function updateSubtitleEditLink(langCode) {
                       if (editLink) {
-                          // Заменяем плейсхолдер на выбранный код языка в шаблоне URL
                           const newUrl = editUrlTemplate.replace('LANGUAGE_PLACEHOLDER', langCode);
                           editLink.href = newUrl;
-                          // Показываем кнопку, только если субтитры для этого языка существуют
-                          editLink.style.display = langCode ? 'block' : 'none'; 
+                          editLink.style.display = langCode ? 'block' : 'none';
                       }
                   }
-                  // -----------------------------------------------------------
 
                   // --- ФУНКЦИЯ: ОТКЛЮЧЕНИЕ СУБТИТРОВ ---
                   function disableSubtitles() {
                       const state = window.subtitleSyncState;
                       console.log('Subtitles disabled.');
-
                       if (typeof stopSubtitleCheck !== 'undefined') stopSubtitleCheck();
                       if (typeof hideSubtitle !== 'undefined') hideSubtitle();
-
                       if (state) {
                           state.currentVttUrl = null;
                           state.subtitlesData = [];
                       }
                   }
-                  // ---------------------------------------------
 
                   /**
-                   * Инициализирует синхронизацию субтитров (только для включения).
+                   * Инициализирует синхронизацию субтитров.
                    */
                   function setupSubtitles(lang) {
                       if (typeof initializeSubtitleSync === 'undefined' || !lang) {
@@ -238,8 +245,7 @@
                           speakerStyles
                       );
                       console.log(`Subtitles set to: ${lang}`);
-                      
-                      // <-- NEW: Обновляем ссылку на редактирование после загрузки
+
                       updateSubtitleEditLink(lang);
                   }
 
@@ -252,7 +258,7 @@
                       });
                   }
 
-                  // 5. Добавляем слушателя событий на ПОЛЗУНОК (ВКЛ/ВЫКЛ)
+                  // 5. Добавляем слушателя событий на ПОЛЗУНОК
                   if (toggleSwitch) {
                       toggleSwitch.addEventListener('change', (event) => {
                           if (event.target.checked) {
@@ -268,13 +274,48 @@
                       });
                   }
 
+                  // ✅ НОВАЯ ЛОГИКА ПОЛНОЭКРАННОГО РЕЖИМА
+
+                  // Функция обновления иконки
+                  function updateFullscreenButtonUI() {
+                      if (!fullscreenIcon) return;
+
+                      if (document.fullscreenElement) {
+                          // Если мы в фулскрине -> меняем иконку на "свернуть"
+                          fullscreenIcon.classList.remove('bi-arrows-fullscreen');
+                          fullscreenIcon.classList.add('bi-fullscreen-exit');
+                          fullscreenBtn.title = "Выйти из полноэкранного режима";
+                      } else {
+                          // Если вышли -> меняем иконку на "развернуть"
+                          fullscreenIcon.classList.remove('bi-fullscreen-exit');
+                          fullscreenIcon.classList.add('bi-arrows-fullscreen');
+                          fullscreenBtn.title = "На весь экран";
+                      }
+                  }
+
+                  if (videoContainer && fullscreenBtn) {
+                      fullscreenBtn.addEventListener('click', () => {
+                          if (!document.fullscreenElement) {
+                              // ⚡ ВАЖНО: Разворачиваем КОНТЕЙНЕР, а не видео
+                              videoContainer.requestFullscreen().catch(err => {
+                                  console.error(`Ошибка при попытке включить полноэкранный режим: ${err.message}`);
+                              });
+                          } else {
+                              document.exitFullscreen();
+                          }
+                      });
+
+                      // ⚡ Слушаем событие изменения режима, чтобы менять иконку
+                      document.addEventListener('fullscreenchange', updateFullscreenButtonUI);
+                  }
+                  // -----------------------------------------------------------
+
                   // 6. Загружаем язык по умолчанию при первом рендеринге
                   const initialLang = select && select.value ? select.value : defaultLang;
 
-                  // 🛑 КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ ДЛЯ ПРИНУДИТЕЛЬНОЙ ИНИЦИАЛИЗАЦИИ
                   window.onYouTubeIframeAPIReady = function() {
                       console.log('YouTube API is ready. Starting subtitle sync.');
-                      
+
                       if (toggleSwitch) {
                           toggleSwitch.checked = true;
                           setupSubtitles(initialLang);
@@ -283,19 +324,16 @@
                       }
                   };
 
-                  // Если YT API уже загружен (редкий случай), запускаем вручную
                   if (typeof YT !== 'undefined' && YT.Player) {
                       window.onYouTubeIframeAPIReady();
                   }
-                  
-                  // <-- NEW: Обновляем ссылку на редактирование даже если субтитры отключены по умолчанию
-                  // Это гарантирует, что ссылка корректна, даже если ползунок был в положении 'выкл'
-                  updateSubtitleEditLink(initialLang); 
-                  
-              })();
-          </script>
 
-          {% endif %}
+                  updateSubtitleEditLink(initialLang);
+
+              })();
+            </script>
+
+            {% endif %}
 
         </div>
       </div>
