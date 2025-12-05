@@ -46,8 +46,18 @@ urlpatterns = [
     ),
     path(
         'films/<int:film_id>/subtitles/edit/',
-        views.subtitle_edit,
-        name='subtitle_edit'
+        views.subtitle_editor_view,
+        name='subtitle_editor_view'
+    ),
+    path(
+        'films/<int:film_id>/subtitles/save/lines/<str:language>/',
+        views.save_subtitle,
+        name='save_subtitle_lines'
+    ),
+    path(
+        'films/<int:film_id>/subtitles/save/styles/<str:language>/',
+        views.save_speaker_colors,
+        name='save_speaker_colors'
     ),
     path(
         'films/<int:film_id>/subtitles/delete/<str:language>/',

@@ -1,7 +1,7 @@
 from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
-from django.db.models import JSONField
 import datetime
+from collections import OrderedDict
 
 
 class MyModel(models.Model):
@@ -128,7 +128,8 @@ class SubtitleSet(MyModel):
     def __str__(self):
         return f"{self.film.name} ({self.language})"
 
-    def format_time(self, milliseconds):
+    @staticmethod
+    def format_time(milliseconds):
         hours, remainder = divmod(milliseconds, 3600000)
         minutes, remainder = divmod(remainder, 60000)
         seconds, milliseconds = divmod(remainder, 1000)
@@ -138,9 +139,9 @@ class SubtitleSet(MyModel):
 
     def generate_vtt(self):
         """
-        Генерирует полный, ЧИСТЫЙ VTT-файл для видеоплеера.
-        Использует только стандартный тег <v Name> для спикера.
-        Использует тег <c.класс> только для стилизации текста.
+        Генерирует чистый VTT-файл для видеоплеера.
+        Использует стандартный тег <v Name> для спикера.
+        Использует тег <c.класс> для стилизации текста.
         """
         vtt_lines = ["WEBVTT\n"]
 
@@ -149,49 +150,82 @@ class SubtitleSet(MyModel):
 
         for line in lines:
             # Преобразование секунд в миллисекунды для format_time
-            start_time = self.format_time(line.start_time * 1000)
-            end_time = self.format_time(line.end_time * 1000)
+            start_time = SubtitleSet.format_time(line.start_time * 1000)
+            end_time = SubtitleSet.format_time(line.end_time * 1000)
 
             # 1. Формируем строку с таймингами
             vtt_cue_line = f"{start_time} --> {end_time}"
-
-            # 🛑 ИСПРАВЛЕНИЕ: Удаляем добавление тега <v Name> из строки таймингов.
-            # В этой строке остается только время.
-
-            vtt_lines.append(vtt_cue_line) # <-- Заголовок метки
-
-            # 2. Извлечение имени спикера
+            vtt_lines.append(vtt_cue_line)
             speaker_name = line.name
-
-            # Инициализируем контент текста
             text_content = line.text
 
-            # ✅ КОРРЕКТИРОВКА: Добавляем тег спикера в НАЧАЛО ТЕКСТА
+            # Имя персонажа обрамляется в тег <v Speaker>
             if speaker_name:
-                # Добавляем тег <v Имя> перед текстом субтитра
                 text_content = f"<v {speaker_name}> {text_content.strip()}"
 
-                # 3. Собираем классы для отображения (VTT-стилизация)
             custom_classes = line.style_classes.strip().split()
 
-            # 4. Собираем финальный контент (обертывая текст и тег спикера в <c.класс>)
+            # Собираем финальный контент (обертывая текст и тег спикера в <c.класс>)
             if custom_classes:
                 class_string = ".".join(custom_classes)
-                # Оборачиваем текст (который теперь может содержать <v Name>) в тег <c.класс1.класс2>
                 text_content = f"<c.{class_string}>{text_content}</c>"
-            # else:
-            # text_content уже содержит либо чистый текст, либо текст с <v Name>
 
-            # 5. Добавляем чистый текст субтитра
+            # Добавляем чистый текст субтитра
             vtt_lines.append(text_content.strip())
-
-            vtt_lines.append("\n") # Пустая строка для разделения блоков VTT
+            vtt_lines.append("\n")
 
         return "\n".join(vtt_lines)
 
+    def get_speaker_colors(self):
+        """
+        Возвращает данные в формате initial=... для SpeakerColorFormSet,
+        объединяя текущие стили с новыми именами спикеров из SubtitleLine.
+        """
+        # Сбор уникальных имен из существующих строк субтитров
+        unique_names_qs = self.lines.filter(
+            name__in=[None, '']
+        ).values_list('name', flat=True).distinct()
+
+        current_colors = self.speaker_color_map or {}
+        combined_names = OrderedDict(current_colors)
+
+        # Добавляем новые имена спикеров с белым цветом по умолчанию
+        for name in unique_names_qs:
+            if name not in combined_names:
+                combined_names[name] = '#ffffff'
+
+        colors_data = []
+        for name, color in combined_names.items():
+            colors_data.append({
+                'speaker_name': name,
+                'color_hex': color
+            })
+
+        return colors_data
+
+    def save_colors(self, formset):
+        """
+        Обрабатывает SpeakerColorFormSet, обновляет JSONField и сохраняет модель.
+        Возвращает True при успехе, или вызывает исключение при ошибке сохранения.
+        """
+        new_speaker_styles = {}
+
+        for form in formset:
+            # Использование .cleaned_data.get() гарантирует, что мы получим None, если поля нет
+            should_delete = form.cleaned_data.get('DELETE')
+            speaker = form.cleaned_data.get('speaker_name')
+            color = form.cleaned_data.get('color_hex')
+
+            if not should_delete and speaker and color and color.lower() != '#ffffff': # should_delete is not None?
+                new_speaker_styles[speaker.strip()] = color.upper()
+
+        self.speaker_color_map = new_speaker_styles
+        self.save()
+        return True
 
 class SubtitleLine(MyModel):
     """Отдельная строка субтитров с таймингами и стилями."""
+
     subtitle_set = models.ForeignKey(
         'SubtitleSet',
         on_delete=models.CASCADE,
@@ -201,16 +235,16 @@ class SubtitleLine(MyModel):
     start_time = models.FloatField(
         verbose_name='Время начала (с)',
         help_text='Время в секундах, с точностью до миллисекунд.',
-        validators=[MinValueValidator(0.0)] # Добавим валидатор
+        validators=[MinValueValidator(0.0)]
     )
     end_time = models.FloatField(
         verbose_name='Время окончания (с)',
-        validators=[MinValueValidator(0.0)] # Добавим валидатор
+        validators=[MinValueValidator(0.0)]
     )
     text = models.TextField(
         verbose_name='Текст субтитра'
     )
-    name = models.CharField( # Используем CharField, как согласовано
+    name = models.CharField(
         max_length=100,
         verbose_name='Имя персонажа',
         null=True, blank=True
@@ -221,18 +255,13 @@ class SubtitleLine(MyModel):
         default='',
         blank=True,
         verbose_name='Классы стилей CSS',
-        help_text='Классы через пробел, например: bold shadow'
+        help_text='Классы через пробел, например: bold loud'
     )
 
     class Meta:
         verbose_name = 'Строка субтитра'
         verbose_name_plural = 'Строки субтитров'
-        # Сортировка по времени начала. Если тайминги одинаковы, порядок не гарантирован,
-        # что является компромиссом после удаления поля 'order'.
         ordering = ['start_time', 'end_time']
 
     def __str__(self):
         return f"[{self.start_time:.2f}] {self.text[:40]}..."
-
-    def save(self, *args, **kwargs):
-        super().save(*args, **kwargs)

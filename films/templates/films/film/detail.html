@@ -121,7 +121,7 @@
                     <select id="subtitle-language-select" class="form-select w-auto">
                         {% for lang in available_languages %}
                         <option value="{{ lang }}" {% if lang == default_lang %}selected{% endif %}>
-                            {{ lang }}
+                            {{ lang|upper }}
                         </option>
                         {% endfor %}
                     </select>
@@ -184,7 +184,7 @@
 
                   const defaultLang = '{{ default_lang }}';
                   const vttUrlTemplate = "{% url 'films:get_subtitles' film_id=film.id language='LANGUAGE_PLACEHOLDER' %}";
-                  const editUrlTemplate = "{% url 'films:subtitle_edit' film_id=film.id %}?lang=LANGUAGE_PLACEHOLDER";
+                  const editUrlTemplate = "{% url 'films:subtitle_editor_view' film_id=film.id %}?lang=LANGUAGE_PLACEHOLDER";
 
                   // 1. Извлекаем ВСЕ карты цветов
                   const allStylesScript = document.getElementById('all-speaker-styles-data');

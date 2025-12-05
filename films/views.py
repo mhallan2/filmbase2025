@@ -1,17 +1,15 @@
 from dal import autocomplete
+from django.urls import reverse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.contrib.auth.decorators import user_passes_test
-from django.views.decorators.http import require_POST
+from django.db import IntegrityError
 from .models import Country, Film, Genre, Person, SubtitleSet, SubtitleLine # <-- Добавлен SubtitleLine
 from .forms import CountryForm, GenreForm, FilmForm, PersonForm, SubtitleLineFormSet, SubtitleSetSelectForm, SpeakerColorFormSet
 from .helpers import paginate
 from django.contrib import messages
-from django.http import HttpResponse, Http404, JsonResponse
+from django.http import HttpResponse, Http404
 from collections import OrderedDict # <-- Для сохранения порядка в карте цветов
 
-# -----------------------------------------------------------------
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (без изменений)
-# -----------------------------------------------------------------
 
 def check_admin(user):
     return user.is_superuser
@@ -242,63 +240,35 @@ class CountryAutocomplete(autocomplete.Select2QuerySetView):
             countries = countries.filter(name__istartswith=self.q)
         return countries
 
-# -----------------------------------------------------------------
-# ФУНКЦИИ СВЯЗАННЫЕ С ФИЛЬМОМ И СУБТИТРАМИ (ОСНОВНЫЕ ИЗМЕНЕНИЯ ЗДЕСЬ)
-# -----------------------------------------------------------------
-
 def film_detail(request, id):
-    # Добавляем prefetch для subtitle_sets для оптимизации
     queryset = Film.objects.prefetch_related("country", "genres", "director",
                                              "people", "subtitle_sets")
     film = get_object_or_404(queryset, id=id)
-
-    # 1. Получаем ВСЕ наборы субтитров
     subtitle_sets = film.subtitle_sets.all().order_by('language')
 
-    # 2. Инициализация структур данных
     available_languages = []
     # Словарь для хранения всех карт цветов: {'ru': {...}, 'fr': {...}}
     all_speaker_color_maps = {}
-    default_lang = 'none' # Заглушка, если субтитров нет
+    default_lang = 'none'
 
     for sset in subtitle_sets:
-        # Убедимся, что язык чистый
         lang = sset.language.strip()
         available_languages.append(lang)
-        # Убедимся, что speaker_color_map не None, иначе используем пустой словарь
         all_speaker_color_maps[lang] = sset.speaker_color_map or {}
 
         # Логика выбора языка по умолчанию: русский, затем первый найденный
         if lang.lower() == 'ru':
             default_lang = lang
         elif default_lang == 'none' and lang:
-            # Если русский еще не выбран, берем первый из списка
             default_lang = lang
 
     return render(request, 'films/film/detail.html',
                   {'film': film,
-                   'available_languages': available_languages, # Список для выпадающего меню
-                   'all_speaker_color_maps': all_speaker_color_maps, # Полная карта цветов (Lang -> Map)
-                   'default_lang': default_lang, # Язык, выбранный по умолчанию
+                   'available_languages': available_languages,
+                   'all_speaker_color_maps': all_speaker_color_maps,
+                   'default_lang': default_lang,
                    })
 
-
-# Вспомогательная функция для форматирования времени в WebVTT
-def format_time(seconds):
-    """Конвертирует float-секунды в формат HH:MM:SS.mmm"""
-    ms = round(seconds * 1000)
-    h = ms // 3600000
-    ms %= 3600000
-    m = ms // 60000
-    ms %= 60000
-    s = ms // 1000
-    ms %= 1000
-    return f"{h:02}:{m:02}:{s:02}.{ms:03}"
-
-
-# -----------------------------------------------------------------
-# ОБНОВЛЕННАЯ ФУНКЦИЯ GET_SUBTITLES (С ТЕГОМ <V ИМЯ> В ТЕКСТЕ)
-# -----------------------------------------------------------------
 def get_subtitles(request, film_id, language):
     """
     Отдает WebVTT файл по запросу клиента.
@@ -314,241 +284,209 @@ def get_subtitles(request, film_id, language):
     except SubtitleSet.DoesNotExist:
         raise Http404(f"Набор субтитров ({language}) не найден.")
 
-    vtt_content = "WEBVTT\n\n"
-
-    for line in subtitle_set.lines.all().order_by('start_time'):
-        start_time_vtt = format_time(line.start_time)
-        end_time_vtt = format_time(line.end_time)
-
-        # 1. Заголовок (время)
-        vtt_content += f"{start_time_vtt} --> {end_time_vtt}\n"
-
-        text_to_write = line.text
-
-        open_style_tags = ""
-        close_style_tags = ""
-
-        # --- 2. ЛОГИКА ОБРАБОТКИ СТИЛЕЙ (классов) ---
-
-        # 🛑 ЭТОТ БЛОК ДОЛЖЕН БЫТЬ ПЕРВЫМ И БЕЗ ВСЯКИХ IF, КРОМЕ ПРОВЕРКИ НАЛИЧИЯ КЛАССОВ!
-        custom_classes_string = line.style_classes.strip() # Всегда определяем переменную!
-
-        if custom_classes_string:
-            # Разделяем строку "bold shadow" на список ['bold', 'shadow']
-            custom_classes_list = custom_classes_string.split()
-
-            # Соединяем список в формат VTT: "class1.class2.class3"
-            class_string = ".".join(custom_classes_list)
-
-            # Определяем теги
-            open_style_tags = f"<c.{class_string}>"
-            close_style_tags = "</c>"
-        # ---------------------------------------------
-
-        # 3. Добавление тега спикера (<v Имя>)
-        if line.name:
-            speaker_name_cleaned = line.name.strip()
-            # Добавляем VTT-тег спикера <v Name> в начало строки текста
-            text_to_write = f"<v {speaker_name_cleaned}>{text_to_write}"
-
-        # 4. Оборачиваем весь текст (с или без спикера) тегами стилей.
-        # Пример: <c.loud><v Ivonn>текст</c>
-        text_to_write = f"{open_style_tags}{text_to_write}{close_style_tags}"
-
-        # 5. Добавление текста субтитра и пустой строки для разделения
-        vtt_content += f"{text_to_write}\n\n"
+    vtt_content = subtitle_set.generate_vtt()
 
     return HttpResponse(vtt_content, content_type="text/vtt; charset=utf-8")
 
-# -----------------------------------------------------------------
-# КЛЮЧЕВАЯ ФУНКЦИЯ: SUBTITLE_EDIT (ПЕРЕРАБОТАНА ПОД PALETTE)
-# -----------------------------------------------------------------
-
 @user_passes_test(check_admin)
-def subtitle_edit(request, film_id):
+def subtitle_editor_view(request, film_id):
     film = get_object_or_404(Film, id=film_id)
-
-    # 1. Загружаем все доступные языки для этого фильма
     available_sets = SubtitleSet.objects.filter(film=film).order_by('language')
     available_languages = [s.language for s in available_sets]
 
-    # Определяем текущий язык для редактирования
-    current_lang = request.GET.get('lang', available_languages[0] if available_languages else None)
+    # 1. Нормализация языка и флагов
+    requested_lang = request.GET.get('lang') or request.GET.get('language')
+    current_lang = requested_lang.upper() if requested_lang else (available_languages[0] if available_languages else None)
+    is_new = request.GET.get('is_new') == 'True'
 
     subtitle_set = None
-    formset = None
-    style_formset = None
-    select_form = None # Инициализация для модального окна
 
-    # 2. Инициализация существующих форм для текущего языка
+    # 2. Получение или создание набора
     if current_lang:
-        try:
-            subtitle_set = available_sets.get(language__iexact=current_lang)
+        subtitle_set = available_sets.filter(language__iexact=current_lang).first()
 
-            # Формсет для строк субтитров
-            formset = SubtitleLineFormSet(request.POST or None, instance=subtitle_set, prefix='lines')
+        if subtitle_set:
+            if is_new:
+                messages.info(request, f'Набор субтитров для "{current_lang}" уже существует и был открыт.')
 
-            # --- ЛОГИКА ФОРМСЕТА ДЛЯ КАРТЫ ЦВЕТОВ ---
-
-            # A. Получаем все уникальные имена из строк субтитров
-            unique_names_qs = SubtitleLine.objects.filter(
-                subtitle_set=subtitle_set
-            ).exclude(
-                name__isnull=True
-            ).exclude(
-                name__exact=''
-            ).values_list('name', flat=True).distinct()
-
-            unique_names = set(unique_names_qs)
-
-            # B. Объединение имен: Сначала существующие (для порядка), затем новые
-            current_styles = subtitle_set.speaker_color_map or {}
-            combined_names = OrderedDict()
-
-            # Добавляем существующие имена (с цветами)
-            for name, color in current_styles.items():
-                combined_names[name] = color
-
-            # Добавляем новые уникальные имена, которых еще нет в карте
-            for name in unique_names:
-                if name not in combined_names:
-                    combined_names[name] = '#ffffff' # Устанавливаем белый по умолчанию для новых
-
-            # C. Преобразование в формат initial данных для Formset
-            initial_styles_data = []
-            for name, color in combined_names.items():
-                initial_styles_data.append({
-                    'speaker_name': name,
-                    'color_hex': color
-                })
-
-            # D. Инициализация Formset стилей
-            is_style_post = request.method == 'POST' and request.POST.get('save_styles') == 'True'
-            style_formset = SpeakerColorFormSet(
-                request.POST if is_style_post else None,
-                initial=initial_styles_data,
-                prefix='styles'
-            )
-
-        except SubtitleSet.DoesNotExist:
-            current_lang = None
-            messages.error(request, f'Набор субтитров для языка "{request.GET.get("lang")}" не найден.')
-
-    # --- Логика обработки POST-запроса ---
-    if request.method == 'POST':
-
-        # A. Обработка сохранения стилей (Карта цветов)
-        if request.POST.get('save_styles') == 'True' and subtitle_set:
-            # style_formset уже проинициализирован с request.POST выше
-            if style_formset and style_formset.is_valid():
-                new_speaker_styles = {}
-                for form in style_formset:
-                    # Проверяем, не помечена ли форма на удаление и есть ли имя спикера
-                    if not form.cleaned_data.get('DELETE'):
-                        speaker = form.cleaned_data.get('speaker_name')
-                        color = form.cleaned_data.get('color_hex')
-
-                        # Сохраняем только валидные пары (имя и цвет)
-                        if speaker and color:
-                             # Если цвет белый, не сохраняем его явно, чтобы использовать дефолтный цвет текста
-                             if color.lower() != '#ffffff':
-                                new_speaker_styles[speaker.strip()] = color.upper()
-
-                try:
-                    # Сохраняем собранный JSON-словарь в SubtitleSet
-                    subtitle_set.speaker_color_map = new_speaker_styles
-                    subtitle_set.save()
-                    messages.success(request, f'Карта цветов ({current_lang}) успешно обновлена.')
-                    return redirect(f'{request.path}?lang={current_lang}')
-                except Exception as e:
-                    messages.error(request, f'Ошибка при сохранении карты цветов: {e}')
-            else:
-                messages.error(request, 'Ошибка при сохранении карты цветов. Проверьте выделенные поля.')
-
-
-        # B. Обработка переключения/создания нового набора (модальное окно)
-        elif 'language' in request.POST:
-            select_form = SubtitleSetSelectForm(request.POST)
-            is_new_request = request.POST.get('is_new') == 'True'
-
-            if select_form.is_valid():
-                new_lang = select_form.cleaned_data['language'].strip().lower()
-
-                try:
-                    SubtitleSet.objects.get(film=film, language__iexact=new_lang)
-                    messages.info(request, f'Переключено на язык: {new_lang.upper()}')
-                    return redirect(f'{request.path}?lang={new_lang}')
-                except SubtitleSet.DoesNotExist:
-                    if is_new_request:
-                        new_set = SubtitleSet.objects.create(film=film, language=new_lang)
-                        messages.success(request, f'Создан новый набор субтитров для языка: {new_lang.upper()}')
-                        return redirect(f'{request.path}?lang={new_lang}')
-            # else: Ошибки select_form будут показаны при рендеринге (см. ниже)
-
-        # C. Обработка сохранения Formset (строки субтитров)
-        elif formset and formset.is_valid():
+        elif is_new: # Если набора НЕТ, но запрошено создание
             try:
-                formset.save()
-                messages.success(request, f'Субтитры ({current_lang}) успешно обновлены.')
-                return redirect('films:film_detail', id=film.id)
+                subtitle_set = SubtitleSet.objects.create(film=film, language=current_lang)
+                messages.success(request, f'Набор субтитров для языка "{current_lang}" создан.')
+                # Редирект для очистки GET-параметров и обновления списка
+                return redirect(reverse('films:subtitle_editor_view', kwargs={"film_id": film_id}) + f'?lang={current_lang}')
+
+            except IntegrityError:
+                messages.error(request, f'Набор субтитров для "{current_lang}" уже существует.')
+                current_lang = None
             except Exception as e:
-                messages.error(request, f'Ошибка при сохранении: {e}')
-        elif formset:
-            messages.error(request, 'Обнаружены ошибки в форме. Пожалуйста, проверьте выделенные поля.')
+                messages.error(request, f'Ошибка при создании набора субтитров: {e}')
+                current_lang = None
 
-    # 3. Финальная инициализация форм для рендеринга (GET или POST с ошибкой)
+        else: # Набора нет, и создание не запрошено
+            messages.error(request, f'Набор субтитров для языка "{current_lang}" не найден.')
+            current_lang = None
 
-    # Инициализируем select_form для модального окна
-    if not select_form:
-        select_form = SubtitleSetSelectForm(initial={'language': current_lang or 'ru'})
+    # --- 3. Инициализация Forms/FormSets (без дублирования) ---
 
-    # Если subtitle_set не существует, инициализируем пустые формсеты
-    if not subtitle_set:
-        # Создаем пустой формсет, привязанный к новому временному SubtitleSet.
-        formset = SubtitleLineFormSet(instance=SubtitleSet(film=film), prefix='lines')
-        # Создаем пустой формсет стилей
-        style_formset = SpeakerColorFormSet(prefix='styles')
+    # Конфигурация для SubtitleLineFormSet
+    line_formset_instance = subtitle_set if subtitle_set else SubtitleSet(film=film)
+    formset = SubtitleLineFormSet(instance=line_formset_instance, prefix='lines')
 
+    # Конфигурация для SpeakerColorFormSet
+    initial_styles = []
+    if subtitle_set:
+        # Сбор и фильтрация speaker colors (улучшенная и читаемая версия)
+        names_qs = SubtitleLine.objects.filter(
+            subtitle_set=subtitle_set
+        ).exclude(name__in=[None, '']).values_list('name', flat=True).distinct()
 
-    # 4. Рендеринг шаблона
-    return render(request, 'films/subtitle_edit.html', {
+        # Объединение существующих цветов с новыми (белыми)
+        merged_colors = subtitle_set.speaker_color_map.copy() if subtitle_set.speaker_color_map else {}
+        for name in names_qs:
+            if name not in merged_colors:
+                merged_colors[name] = '#ffffff'
+
+        # Фильтрация и формирование initial данных (удаление пустых ключей)
+        initial_styles = [
+            {'speaker_name': n, 'color_hex': c}
+            for n, c in merged_colors.items() if n and n.strip() # Фильтрация пустых/None
+        ]
+
+    style_formset = SpeakerColorFormSet(initial=initial_styles, prefix='styles')
+
+    # Конфигурация для SelectForm
+    default_lang = current_lang if current_lang else (requested_lang or 'RU')
+    select_form = SubtitleSetSelectForm(initial={'language': default_lang})
+
+    # 4. Рендеринг
+    return render(request, 'films/subtitle/editor.html', {
         'film': film,
-        'formset': formset,
-        'style_formset': style_formset,
         'current_lang': current_lang,
         'available_languages': available_languages,
+        'subtitle_set': subtitle_set,
+        'formset': formset,
+        'style_formset': style_formset,
         'select_form': select_form,
     })
 
-@require_POST
-def delete_subtitles(request, film_id, language):
-    if not request.user.is_superuser:
-        return JsonResponse({'error': 'Доступ запрещен.'}, status=403)
+@user_passes_test(check_admin)
+def save_subtitle(request, film_id, language):
+    if request.method != 'POST':
+        return redirect('films:subtitle_editor_view', film_id=film_id, lang=language)
 
+    subtitle_set = get_object_or_404(SubtitleSet, film_id=film_id, language__iexact=language)
+    # Formset привязан к POST-данным
+    formset = SubtitleLineFormSet(request.POST, instance=subtitle_set, prefix='lines')
+
+    if formset.is_valid():
+        try:
+            # УСПЕХ: Сохраняем, выводим сообщение, делаем редирект (POST-Redirect-GET)
+            formset.save()
+            messages.success(request, f'Субтитры ({language}) успешно обновлены.')
+            # Редирект обратно в редактор для обновления содержимого
+            return redirect(f'{reverse("films:subtitle_editor_view", kwargs={"film_id": film_id})}?lang={language}')
+        except Exception as e:
+            # Ошибка сохранения (например, проблемы с БД)
+            messages.error(request, f'Ошибка при сохранении субтитров: {e}')
+            return redirect(f'{reverse("films:subtitle_editor_view", kwargs={"film_id": film_id})}?lang={language}')
+    else:
+        # 🛑 НЕУДАЧА: РЕНДЕРИНГ ШАБЛОНА С ОШИБКАМИ
+
+        # 1. Собираем контекст, необходимый для editor.html
+        film = get_object_or_404(Film, id=film_id)
+        available_sets = SubtitleSet.objects.filter(film=film).order_by('language')
+        available_languages = [s.language for s in available_sets]
+
+        # 2. Инициализируем Style Formset (чистыми данными из БД, т.к. его не трогали)
+        initial_styles_data = subtitle_set.get_speaker_colors()
+        style_formset = SpeakerColorFormSet(initial=initial_styles_data, prefix='styles')
+
+        # 3. Инициализируем форму выбора языка
+        select_form = SubtitleSetSelectForm(initial={'language': language})
+
+        # 4. Добавляем общее сообщение об ошибке (оно будет дополнено специфическими ошибками формсета)
+        messages.error(request, 'Обнаружены ошибки в форме субтитров. Проверьте выделенные поля.')
+
+        return render(request, 'films/subtitle/editor.html', {
+            'film': film,
+            'current_lang': language,
+            'available_languages': available_languages,
+            'subtitle_set': subtitle_set,
+            # 💥 Передаем ошибочный formset, который содержит POST-данные пользователя
+            'formset': formset,
+            'style_formset': style_formset,
+            'select_form': select_form,
+        })
+
+@user_passes_test(check_admin)
+def save_speaker_colors(request, film_id, language):
+    """
+    Обрабатывает POST-запрос на сохранение карты цветов персонажей (SpeakerColorFormSet).
+    Функция является 'тонкой', делегируя всю логику данных методам модели SubtitleSet.
+    """
+    # 1. Защита от GET-запросов и проверка прав
+    if request.method != 'POST':
+        # Перенаправляет обратно в редактор с сохранением контекста
+        return redirect('films:subtitle_editor_view', film_id=film_id, lang=language)
+
+    # 2. Получение объекта
+    subtitle_set = get_object_or_404(SubtitleSet, film_id=film_id, language__iexact=language)
+
+    # 3. Получение начальных данных (через метод модели)
+    # Эта логика (сбор уникальных имен, объединение цветов) теперь находится в models.py
+    try:
+        initial_styles_data = subtitle_set.get_speaker_colors()
+    except Exception as e:
+        messages.error(request, f'Ошибка при подготовке данных для стилей: {e}')
+        return redirect(f'{reverse("films:subtitle_editor_view", kwargs={"film_id": film_id})}?lang={language}')
+
+    # 4. Инициализация и валидация Formset
+    style_formset = SpeakerColorFormSet(
+        request.POST,
+        initial=initial_styles_data,
+        prefix='styles'
+    )
+
+    if style_formset.is_valid():
+        try:
+            # 5. Сохранение данных (через метод модели)
+            # Вся сложная логика обработки и сохранения JSONField находится здесь
+            subtitle_set.save_colors(style_formset)
+            messages.success(request, f'Карта цветов ({language}) успешно обновлена.')
+        except Exception as e:
+            # Обработка ошибок, которые могут возникнуть при сохранении в базе данных
+            messages.error(request, f'Ошибка при сохранении карты цветов: {e}')
+    else:
+        # Если валидация не прошла (например, некорректный HEX-код)
+        messages.error(request, 'Ошибка при сохранении карты цветов. Пожалуйста, проверьте выделенные поля.')
+
+    # 6. Редирект обратно в редактор (для сохранения контекста или отображения ошибок)
+    return redirect(f'{reverse("films:subtitle_editor_view", kwargs={"film_id": film_id})}?lang={language}')
+
+@user_passes_test(check_admin)
+def delete_subtitles(request, film_id, language):
     film = get_object_or_404(Film, pk=film_id)
 
     try:
-        # ШАГ 1: Находим SubtitleSet
-        subtitle_set = get_object_or_404(
-            SubtitleSet,
-            film=film,
-            language=language
-        )
+        subtitle_set = SubtitleSet.objects.get(film=film, language=language)
+    except SubtitleSet.DoesNotExist:
+        messages.error(request, f'Субтитры для языка "{language}" не найдены.')
+        return redirect('films:film_detail', id=film.id)
 
-        # ШАГ 2: Удаляем SubtitleLine (строки)
-        deleted_count, details = SubtitleLine.objects.filter(
+    if request.method == 'POST':
+        deleted_count, _ = SubtitleLine.objects.filter(
             subtitle_set=subtitle_set
         ).delete()
-
-        # ШАГ 3: Удаляем сам SubtitleSet (чтобы язык исчез из выбора)
         SubtitleSet.objects.filter(pk=subtitle_set.pk).delete()
+        messages.success(request, f'Удалено {deleted_count} строк субтитров для языка "{language}".')
 
-        return JsonResponse({'message': f'удалено {deleted_count} строк субтитров для языка {language}.'}, status=200)
+        return redirect('films:film_detail', id=film.id)
 
-    except SubtitleSet.DoesNotExist:
-        return JsonResponse({'error': f'Субтитры для языка {language} не найдены.'}, status=404)
-
-    except Exception as e:
-        # Если здесь появляется "Cannot resolve keyword 'film'",
-        # значит ошибка ГДЕ-ТО ЕЩЕ, а не в этой функции.
-        return JsonResponse({'error': f'Внутренняя ошибка сервера: {str(e)}'}, status=500)
+    # Если метод GET, показываем страницу подтверждения
+    return render(request, 'films/subtitle/delete_confirm.html',
+                  {
+                      'film': film,
+                      'language': language,
+                      'subtitle_set': subtitle_set,
+                  })

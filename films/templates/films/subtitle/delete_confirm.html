@@ -1,0 +1,27 @@
+{% extends "films/base.html" %}
+
+{% block content %}
+<div class="container my-5">
+    <h2>Удаление субтитров</h2>
+    <hr>
+
+    <div class="alert alert-danger" role="alert">
+        <strong>Внимание!</strong> Вы собираетесь удалить все субтитры для фильма
+        <strong>{{ film.name }}</strong> на языке <strong>{{ language }}</strong>.
+        Это действие необратимо.
+    </div>
+
+    <form method="POST">
+        {% csrf_token %}
+        <p>Вы уверены, что хотите продолжить?</p>
+
+        <button type="submit" class="btn btn-danger me-2">
+            <i class="bi bi-trash"></i> Подтвердить удаление
+        </button>
+
+        <a href="{% url 'films:film_detail' film.id %}" class="btn btn-secondary">
+            Отмена
+        </a>
+    </form>
+</div>
+{% endblock content %}

@@ -1,0 +1,375 @@
+{% extends 'films/base.html' %}
+{% load static %}
+{% load films_tags %}
+
+{% block content %}
+<div class="container my-4">
+    <h2>Редактирование субтитров для "{{ film.name }}"</h2>
+
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        {# ... (Остальная часть блока с переключением и удалением) ... #}
+
+        {# ----------------------------------------------------------- #}
+        {#               1. ПЕРЕКЛЮЧЕНИЕ СУЩЕСТВУЮЩИХ ЯЗЫКОВ           #}
+        {# ----------------------------------------------------------- #}
+        <div class="me-3">
+            <label for="language-select" class="form-label mb-0">Текущий язык:</label>
+            <select class="form-select" id="language-select" style="width: auto; display: inline-block;">
+                {% for lang in available_languages %}
+                    <option value="{{ lang }}" {% if lang|lower == current_lang|lower %}selected{% endif %}>
+                        {{ lang|upper }}
+                    </option>
+                {% empty %}
+                    <option value="" disabled selected>Нет доступных наборов</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        {# ----------------------------------------------------------- #}
+        {#               2. ДОБАВЛЕНИЕ НОВОГО НАБОРА (Modal)           #}
+        {# ----------------------------------------------------------- #}
+        <div>
+            <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addLanguageModal">
+                <i class="bi-plus-lg"></i> Добавить язык
+            </button>
+        </div>
+
+        {# ----------------------------------------------------------- #}
+        {#               3. УДАЛЕНИЕ НАБОРА (Modal Trigger)            #}
+        {# ----------------------------------------------------------- #}
+        <div class="d-flex justify-content-end mb-3">
+            {% if current_lang %}
+                <button
+                    type="button"
+                    class="btn btn-danger ms-2"
+                    data-bs-toggle="modal"
+                    data-bs-target="#deleteSubtitlesModal"
+                >
+                    <i class="bi-trash"></i>
+                    Удалить субтитры ({{ current_lang }})
+                </button>
+            {% endif %}
+        </div>
+
+        {# ----------------- MODAL: ПОДТВЕРЖДЕНИЕ УДАЛЕНИЯ ----------------- #}
+        <div class="modal fade" id="deleteSubtitlesModal" tabindex="-1" aria-labelledby="deleteSubtitlesModalLabel" aria-hidden="true">
+          <div class="modal-dialog">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title" id="deleteSubtitlesModalLabel">Подтверждение удаления</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+              </div>
+              <div class="modal-body">
+                  Вы уверены, что хотите удалить все субтитры для языка <b>{{ current_lang }}</b>? Это действие необратимо!
+              </div>
+              <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                {# ВАЖНО: Кнопка запускает JS, который отправляет POST-запрос на DELETE URL #}
+                <button type="button" class="btn btn-danger" id="confirm-delete-subtitles">
+                    Удалить
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+    </div>
+
+    {# ----------------------------------------------------------- #}
+    {#               4. ФОРМА РЕДАКТИРОВАНИЯ СТИЛЕЙ (АККОРДЕОН)    #}
+    {# ----------------------------------------------------------- #}
+    {% if current_lang and style_formset %}
+    <div class="accordion my-3" id="stylesAccordion">
+      <div class="accordion-item">
+        <h2 class="accordion-header" id="headingOne">
+          <button class="accordion-button {% if not style_formset.errors %}collapsed{% endif %}"
+                  type="button"
+                  data-bs-toggle="collapse"
+                  data-bs-target="#collapseOne"
+                  aria-expanded="{% if style_formset.errors %}true{% else %}false{% endif %}"
+                  aria-controls="collapseOne">
+            <i class="bi-palette me-2"></i> Редактировать карту цветов персонажей ({{ current_lang|upper }})
+            {% if style_formset.errors %}<span class="badge bg-danger ms-2">Ошибки</span>{% endif %}
+          </button>
+        </h2>
+        <div id="collapseOne"
+             class="accordion-collapse collapse {% if style_formset.errors %}show{% endif %}"
+             aria-labelledby="headingOne"
+             data-bs-parent="#stylesAccordion">
+          <div class="accordion-body">
+            <p class="text-muted">Настройте цвета для каждого персонажа, обнаруженного в субтитрах. Имена автоматически извлекаются из колонки "Спикер". Установка цвета в белый (#FFFFFF) или отметка "Сбросить/Удалить" удаляет имя из карты цветов.</p>
+
+            {# ⚡ ИСПРАВЛЕНИЕ URL: Отправляем на новую View save_speaker_colors #}
+            <form method="post" action="{% url 'films:save_speaker_colors' film_id=film.id language=current_lang %}" class="mt-3">
+
+                {# ❗ CSRF-токен здесь НУЖЕН, так как это POST-запрос #}
+                {% csrf_token %}
+
+                {# Management Form для формсета #}
+                {{ style_formset.management_form }}
+
+                {# ⚡ ВЫВОД ФОРМСЕТА СТИЛЕЙ #}
+                {% if style_formset %}
+                <div class="table-responsive">
+                    <table class="table table-sm table-borderless">
+                        <thead>
+                            <tr>
+                                <th scope="col" style="width: 30%;">Имя спикера</th>
+                                <th scope="col" style="width: 50%;">Цвет</th>
+                                <th scope="col" style="width: 20%;">Сбросить</th>
+                            </tr>
+                        </thead>
+                        <tbody id="style-formset-body">
+                        {% for form in style_formset %}
+                            <tr class="{% if form.errors %}table-danger{% endif %}" data-speaker-name="{{ form.speaker_name.value|default_if_none:'' }}">
+
+                                {# Скрытое поле speaker_name #}
+                                {{ form.speaker_name }}
+                                {# Скрытое поле id (если бы был ModelForm) #}
+                                {% for hidden in form.hidden_fields %}{{ hidden }}{% endfor %}
+
+                                <td class="align-middle fw-bold">
+                                    {# Выводим ИМЯ СПИКЕРА (значение скрытого поля speaker_name) #}
+                                    {{ form.speaker_name.value|default_if_none:'(Новый спикер)' }}
+                                </td>
+
+                                <td class="align-middle d-flex align-items-center">
+                                    {{ form.color_hex }}
+                                    {% if form.color_hex.errors %}<div class="text-danger small">{{ form.color_hex.errors }}</div>{% endif %}
+                                </td>
+
+                                <td class="align-middle">
+                                    {# Поле DELETE и кнопка для сброса/удаления #}
+                                    <div class="form-check">
+                                        {{ form.DELETE }}
+                                        <label class="form-check-label text-muted" for="{{ form.DELETE.id_for_label }}">Сбросить/Удалить</label>
+                                    </div>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                    {% if style_formset.non_field_errors %}
+                        <div class="alert alert-danger">{{ style_formset.non_field_errors }}</div>
+                    {% endif %}
+                </div>
+                {% else %}
+                    <div class="alert alert-info">
+                        Уникальные имена персонажей не найдены. Укажите "Спикера" хотя бы в одной строке субтитров.
+                    </div>
+                {% endif %}
+
+                <button type="submit" class="btn btn-sm btn-success mt-3">
+                    <i class="bi-check-lg"></i> Сохранить карту цветов
+                </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# ----------------------------------------------------------- #}
+    {#                 5. ОСНОВНАЯ ФОРМА РЕДАКТИРОВАНИЯ (Строк)    #}
+    {# ----------------------------------------------------------- #}
+
+    {% if current_lang %}
+    {# ⚡ ИСПРАВЛЕНИЕ URL: Отправляем на новую View save_subtitle_lines #}
+    <form method="post" id="subtitle-form" action="{% url 'films:save_subtitle_lines' film_id=film.id language=current_lang %}" class="mt-4">
+
+        {# ❗ CSRF-токен здесь НУЖЕН, так как это POST-запрос #}
+        {% csrf_token %}
+
+        <p class="mb-3">Вы редактируете набор <b>{{ current_lang|upper }}</b>. Используйте таблицу ниже для изменения текста, таймингов и стилей субтитров.</p>
+
+        {# Обязательно выводим Management Form #}
+        {{ formset.management_form }}
+
+        {# ВОССТАНОВЛЕННАЯ ТАБЛИЦА СУБТИТРОВ #}
+        <div class="table-responsive">
+            <table class="table table-sm table-striped subtitle-table" id="subtitle-table">
+                <thead>
+                    <tr>
+                        <th scope="col" style="width: 3%;">#</th>
+                        <th scope="col" style="width: 8%;">Начало (с)</th>
+                        <th scope="col" style="width: 8%;">Конец (с)</th>
+                        <th scope="col" style="width: 35%;">Текст субтитра</th>
+                        <th scope="col" style="width: 15%;">Спикер</th>
+                        <th scope="col" style="width: 20%;">Стили (Чекбоксы)</th>
+                        <th scope="col" style="width: 6%;">Удалить</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {# Формы, отображаемые Django, будут здесь #}
+                    {% for form in formset %}
+                        {% include "films/includes/subtitle_form_row.html" with form=form forloop=forloop %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <div class="d-flex justify-content-between my-3">
+            <div>
+                {# Кнопка для динамического добавления новой строки #}
+                <button type="button" class="btn btn-info" id="add-subtitle-row">
+                    <i class="bi-plus-lg"></i> Добавить строку
+                </button>
+            </div>
+            <div>
+                <a href="{% url 'films:film_detail' film.id %}" class="btn btn-secondary">Отмена</a>
+                <button type="submit" class="btn btn-success">
+                    <i class="bi-check-lg"></i> Сохранить изменения
+                </button>
+            </div>
+        </div>
+    </form>
+    {% else %}
+        <div class="alert alert-warning">
+            Для этого фильма еще нет субтитров. Нажмите "Добавить язык" выше, чтобы начать.
+        </div>
+    {% endif %}
+</div>
+
+{# ----------------------------------------------------------- #}
+{#               МОДАЛЬНОЕ ОКНО ДЛЯ ДОБАВЛЕНИЯ ЯЗЫКА           #}
+{# ----------------------------------------------------------- #}
+<div class="modal fade" id="addLanguageModal" tabindex="-1" aria-labelledby="addLanguageModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      {# ⚡ ИСПРАВЛЕНИЕ: Это GET-форма. Токен НЕ НУЖЕН. Удалил {% csrf_token %} #}
+      <form method="get" action="{% url 'films:subtitle_editor_view' film.id %}">
+
+        <div class="modal-header">
+          <h5 class="modal-title" id="addLanguageModalLabel">Добавить новый язык субтитров</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <p>Введите двухбуквенный код языка (ISO 639-1).</p>
+
+          {% with language_field=select_form.language %}
+            <div class="mb-3">
+                <label for="{{ language_field.id_for_label }}" class="form-label">{{ language_field.label }}</label>
+                <input
+                    type="text"
+                    name="lang"
+                    id="{{ language_field.id_for_label }}"
+                    value="{{ language_field.value|default_if_none:'' }}"
+                    class="form-control"
+                    maxlength="{{ language_field.field.max_length }}"
+                >
+            </div>
+          {% endwith %}
+
+          {# Скрытое поле 'is_new' #}
+          <input type="hidden" name="is_new" value="True">
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+          <button type="submit" class="btn btn-primary">Создать набор</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{# ----------------------------------------------------------- #}
+{#               БЛОК JAVASCRIPT                               #}
+{# ----------------------------------------------------------- #}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const confirmDeleteBtn = document.getElementById('confirm-delete-subtitles');
+        const deleteModalElement = document.getElementById('deleteSubtitlesModal');
+        // Предполагаем, что Bootstrap загружен
+        const deleteModal = new bootstrap.Modal(deleteModalElement);
+
+        if (confirmDeleteBtn) {
+            confirmDeleteBtn.addEventListener('click', () => {
+
+                const filmId = "{{ film.id }}";
+                const langCode = "{{ current_lang }}";
+
+                // ⚡ ИСПРАВЛЕНИЕ URL: Используем новый маршрут delete_subtitles
+                const deleteUrlTemplate = "{% url 'films:delete_subtitles' film_id=0 language='LANGUAGE_PLACEHOLDER' %}";
+                const deleteUrl = deleteUrlTemplate
+                    .replace('0', filmId)
+                    .replace('LANGUAGE_PLACEHOLDER', langCode);
+
+                // Создаем временную форму для отправки POST-запроса с CSRF
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = deleteUrl;
+
+                // Токен здесь должен быть взят из DOM, так как {{ csrf_token }}
+                // в данном JS-коде находится за пределами блока 'block content' и может быть
+                // недоступен. Однако, если base.html его предоставляет, он сработает.
+                // Оставляем как есть, предполагая, что {{ csrf_token }} работает.
+                const csrfInput = document.createElement('input');
+                csrfInput.type = 'hidden';
+                csrfInput.name = 'csrfmiddlewaretoken';
+                csrfInput.value = '{{ csrf_token }}';
+
+                form.appendChild(csrfInput);
+                document.body.appendChild(form);
+
+                deleteModal.hide(); // Скрываем модальное окно
+                form.submit(); // Отправляем форму (POST-запрос)
+            });
+        }
+    });
+
+    // JS для переключения языка при выборе из <select>
+    document.getElementById('language-select').addEventListener('change', function() {
+        const selectedLang = this.value;
+        if (selectedLang) {
+            // ⚡ ИСПРАВЛЕНИЕ URL: Используем новый маршрут subtitle_editor_view
+            window.location.href = '{% url "films:subtitle_editor_view" film.id %}?lang=' + selectedLang;
+        }
+    });
+
+    // ... (Остальная часть JS-кода остается без изменений) ...
+    $(document).ready(function() {
+        // --- ЛОГИКА ДЛЯ ФОРМСЕТА СТРОК СУБТИТРОВ ---
+        const $tableBody = $('#subtitle-table tbody');
+        const $totalFormsInput = $('#id_lines-TOTAL_FORMS');
+
+        // ВАЖНО: emptyFormHtml теперь будет содержать правильные имена полей
+        const emptyFormHtml = `
+            {% filter escapejs %}
+                {% include "films/includes/subtitle_form_row.html" with form=formset.empty_form forloop=null %}
+            {% endfilter %}
+        `;
+
+        $('#add-subtitle-row').click(function() {
+            const currentTotalForms = parseInt($totalFormsInput.val()) || 0;
+
+            let newFormHtml = emptyFormHtml.replace(/__prefix__/g, currentTotalForms);
+
+            $tableBody.append(newFormHtml);
+            $totalFormsInput.val(currentTotalForms + 1);
+
+            // Обновляем нумерацию в первой ячейке новой строки
+            const $newRow = $tableBody.find('tr').last();
+            $newRow.find('td:first').text(currentTotalForms + 1);
+
+            $newRow.removeClass('table-danger');
+        });
+
+        // --- ЛОГИКА ДЛЯ ФОРМСЕТА СТИЛЕЙ (Карта цветов) ---
+        // Обработка клика по чекбоксу "Сбросить/Удалить"
+        $('#style-formset-body input[type="checkbox"][name$="-DELETE"]').change(function() {
+            const $row = $(this).closest('tr');
+            const $colorInput = $row.find('input[type="color"]');
+            const isChecked = $(this).is(':checked');
+
+            if (isChecked) {
+                $row.addClass('text-muted');
+                $colorInput.val('#ffffff');
+                $colorInput.prop('disabled', true);
+            } else {
+                $row.removeClass('text-muted');
+                $colorInput.prop('disabled', false);
+            }
+        }).trigger('change');
+    });
+</script>
+
+{% endblock %}
