@@ -248,14 +248,7 @@
           {% with language_field=select_form.language %}
             <div class="mb-3">
                 <label for="{{ language_field.id_for_label }}" class="form-label">{{ language_field.label }}</label>
-                <input
-                    type="text"
-                    name="lang"
-                    id="{{ language_field.id_for_label }}"
-                    value="{{ language_field.value|default_if_none:'' }}"
-                    class="form-control"
-                    maxlength="{{ language_field.field.max_length }}"
-                >
+                {{ select_form.language }}
             </div>
           {% endwith %}
 
@@ -298,14 +291,13 @@
                 form.method = 'POST';
                 form.action = deleteUrl;
 
-                // Токен здесь должен быть взят из DOM, так как {{ csrf_token }}
-                // в данном JS-коде находится за пределами блока 'block content' и может быть
-                // недоступен. Однако, если base.html его предоставляет, он сработает.
-                // Оставляем как есть, предполагая, что {{ csrf_token }} работает.
+                const csrfName = 'csrfmiddlewaretoken';
+                const csrfValue = document.querySelector(`[name=${csrfName}]`).value;
                 const csrfInput = document.createElement('input');
                 csrfInput.type = 'hidden';
-                csrfInput.name = 'csrfmiddlewaretoken';
-                csrfInput.value = '{{ csrf_token }}';
+                csrfInput.name = csrfName;
+                csrfInput.value = csrfValue;
+
 
                 form.appendChild(csrfInput);
                 document.body.appendChild(form);
@@ -333,9 +325,7 @@
 
         // ВАЖНО: emptyFormHtml теперь будет содержать правильные имена полей
         const emptyFormHtml = `
-            {% filter escapejs %}
-                {% include "films/includes/subtitle_form_row.html" with form=formset.empty_form forloop=null %}
-            {% endfilter %}
+            {% include "films/includes/subtitle_form_row.html" with form=formset.empty_form forloop=null %}
         `;
 
         $('#add-subtitle-row').click(function() {

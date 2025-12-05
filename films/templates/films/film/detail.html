@@ -16,12 +16,14 @@
 {% block content %}
 
   <link rel="stylesheet" href="{% static 'films/css/base.css' %}">
+  <link rel="stylesheet" href="{% static 'films/css/subtitles.css' %}">
 
   <div class="row">
     <div class="col-md-3">
       {% if film.cover %}
         <img src="{{ film.cover.url }}" alt="{{ film.name }}" class="img-thumbnail" />
       {% endif %}
+
       {% if user.is_superuser %}
       <div class="d-grid gap-2 my-4">
         <a href="{% url 'films:film_update' film.id %}" class="btn btn-primary btn-block">
@@ -29,12 +31,11 @@
           Редактировать
         </a>
 
-        <a id="edit-subtitles-link" 
-           href="#" 
-           class="btn btn-warning btn-block" 
-           style="display:none;">
-          <i class="bi-pen"></i>
-          Редактировать субтитры
+        <a id="edit-subtitles-link"
+           class="btn btn-warning mt-3"
+           href="{% url 'films:subtitle_editor_view' film.id %}">
+           <i class="bi-pen"></i>
+           Редактировать субтитры
         </a>
 
         <a href="{% url 'films:film_delete' film.id %}" class="btn btn-danger btn-block">
@@ -44,64 +45,55 @@
       </div>
       {% endif %}
     </div>
+
     <div class="col-md-9">
       <div class="card">
         <div class="card-body">
+
           <h1 class="card-title">{{ film.name }}</h1>
           {% if film.origin_name %}
             <h2 class="card-subtitle mb-2 text-body-secondary">{{ film.origin_name }}</h2>
           {% endif %}
+
           <dl class="row">
             {% if film.country %}
-              <dt class="col-md-3 text-md-end">
-                {% verbose_name film 'country' %}
-              </dt>
+              <dt class="col-md-3 text-md-end">{% verbose_name film 'country' %}</dt>
               <dd class="col-md-9"><a href="{% url 'films:country_detail' film.country.id %}">{{ film.country.name }}</a></dd>
             {% endif %}
 
             {% if film.genres %}
-              <dt class="col-md-3 text-md-end">
-                {% verbose_name film 'genres' %}
-              </dt>
+              <dt class="col-md-3 text-md-end">{% verbose_name film 'genres' %}</dt>
               <dd class="col-md-9">
                 {% for genre in film.genres.all %}
                   <a href="{% url 'films:genre_detail' genre.id %}">{{ genre.name }}</a>{% if not forloop.last %}, {% endif %}
                 {% endfor %}
               </dd>
             {% endif %}
+
             {% if film.length %}
-              <dt class="col-md-3 text-md-end">
-                {% verbose_name film 'length' %}
-              </dt>
+              <dt class="col-md-3 text-md-end">{% verbose_name film 'length' %}</dt>
               <dd class="col-md-9">
-                {{ film.length }}
-                {{ film.length|ru_plural:'минута,минуты,минут' }}
+                {{ film.length }} {{ film.length|ru_plural:'минута,минуты,минут' }}
               </dd>
             {% endif %}
 
             {% if film.year %}
-              <dt class="col-md-3 text-md-end">
-                {% verbose_name film 'year' %}
-              </dt>
+              <dt class="col-md-3 text-md-end">{% verbose_name film 'year' %}</dt>
               <dd class="col-md-9">{{ film.year }}</dd>
             {% endif %}
 
             {% if film.description %}
-              <dt class="col-md-3 text-md-end">
-                {% verbose_name film 'description' %}
-              </dt>
+              <dt class="col-md-3 text-md-end">{% verbose_name film 'description' %}</dt>
               <dd class="col-md-9">{{ film.description }}</dd>
             {% endif %}
+
             {% if film.director %}
-              <dt class="col-md-3 text-md-end">
-                {% verbose_name film 'director' %}
-              </dt>
+              <dt class="col-md-3 text-md-end">{% verbose_name film 'director' %}</dt>
               <dd class="col-md-9"><a href="{% url 'films:person_detail' film.director.id %}">{{ film.director.name }}</a></dd>
             {% endif %}
+
             {% if film.people %}
-              <dt class="col-md-3 text-md-end">
-                {% verbose_name film 'people' %}
-              </dt>
+              <dt class="col-md-3 text-md-end">{% verbose_name film 'people' %}</dt>
               <dd class="col-md-9">
                 {% for person in film.people.all %}
                   <a href="{% url 'films:person_detail' person.id %}">{{ person.name }}</a>{% if not forloop.last %}, {% endif %}
@@ -117,7 +109,7 @@
             <div class="d-flex align-items-center mb-3">
 
                 <div class="me-4">
-                    <label for="subtitle-language-select" class="form-label mb-0">Язык субтитров:</label>
+                    <label class="form-label mb-0" for="subtitle-language-select">Язык субтитров:</label>
                     <select id="subtitle-language-select" class="form-select w-auto">
                         {% for lang in available_languages %}
                         <option value="{{ lang }}" {% if lang == default_lang %}selected{% endif %}>
@@ -128,23 +120,13 @@
                 </div>
 
                 <div class="form-check form-switch mt-4 me-3">
-                    <input
-                        class="form-check-input"
-                        type="checkbox"
-                        role="switch"
-                        id="subtitles-toggle"
-                        checked
-                    >
+                    <input class="form-check-input" id="subtitles-toggle" type="checkbox" role="switch" checked>
                 </div>
-
-                {# Кнопку отсюда убрали, она теперь внутри плеера #}
 
             </div>
             {% endif %}
 
-            {# ✅ КОНТЕЙНЕР ПЛЕЕРА С КНОПКОЙ ВНУТРИ #}
-            <div class="main-video-wrapper" id="video-player-container">
-                {# Добавили &fs=0 чтобы скрыть нативную кнопку YouTube #}
+            <div id="video-player-container" class="main-video-wrapper">
                 <div class="ratio ratio-16x9">
                     <iframe
                         id="youtube-player"
@@ -158,185 +140,26 @@
 
                 <div id="custom-subtitle-overlay"></div>
 
-                {# ✅ КНОПКА ПОЛНОЭКРАННОГО РЕЖИМА ВНУТРИ КОНТЕЙНЕРА #}
                 <button id="custom-fullscreen-btn" class="btn btn-dark" type="button" title="На весь экран">
                     <i class="bi bi-arrows-fullscreen"></i>
                 </button>
             </div>
 
-            {# 2. ПЕРЕДАЕМ ВСЕ КАРТЫ ЦВЕТОВ В JS #}
             {% if all_speaker_color_maps %}
-            {{ all_speaker_color_maps|json_script:"all-speaker-styles-data" }}
+              {{ all_speaker_color_maps|json_script:"all-speaker-styles-data" }}
             {% endif %}
 
-            <script src="{% static 'films/js/subtitle_sync.js' %}"></script>
-
+            {# ⬇️ Загрузка ES6-модуля управления субтитрами #}
             <script>
-              (function() {
-                  const select = document.getElementById('subtitle-language-select');
-                  const toggleSwitch = document.getElementById('subtitles-toggle');
-                  const editLink = document.getElementById('edit-subtitles-link');
-
-                  // Элементы полного экрана
-                  const videoContainer = document.getElementById('video-player-container');
-                  const fullscreenBtn = document.getElementById('custom-fullscreen-btn');
-                  const fullscreenIcon = fullscreenBtn ? fullscreenBtn.querySelector('i') : null;
-
-                  const defaultLang = '{{ default_lang }}';
-                  const vttUrlTemplate = "{% url 'films:get_subtitles' film_id=film.id language='LANGUAGE_PLACEHOLDER' %}";
-                  const editUrlTemplate = "{% url 'films:subtitle_editor_view' film_id=film.id %}?lang=LANGUAGE_PLACEHOLDER";
-
-                  // 1. Извлекаем ВСЕ карты цветов
-                  const allStylesScript = document.getElementById('all-speaker-styles-data');
-                  let allSpeakerStyles = {};
-
-                  if (allStylesScript) {
-                      try {
-                          allSpeakerStyles = JSON.parse(allStylesScript.textContent);
-                      } catch (e) {
-                          console.error("Error parsing all speaker styles JSON:", e);
-                          return;
-                      }
-                  }
-
-                  // 🛑 Защита: Если плеер уже инициализирован, выходим.
-                  if (window.subtitleSyncState && window.subtitleSyncState.player) {
-                      console.warn('Player already initialized. Skipping initial load.');
-                      return;
-                  }
-
-                  // --- ФУНКЦИЯ: Обновление ссылки на редактирование ---
-                  function updateSubtitleEditLink(langCode) {
-                      if (editLink) {
-                          const newUrl = editUrlTemplate.replace('LANGUAGE_PLACEHOLDER', langCode);
-                          editLink.href = newUrl;
-                          editLink.style.display = langCode ? 'block' : 'none';
-                      }
-                  }
-
-                  // --- ФУНКЦИЯ: ОТКЛЮЧЕНИЕ СУБТИТРОВ ---
-                  function disableSubtitles() {
-                      const state = window.subtitleSyncState;
-                      console.log('Subtitles disabled.');
-                      if (typeof stopSubtitleCheck !== 'undefined') stopSubtitleCheck();
-                      if (typeof hideSubtitle !== 'undefined') hideSubtitle();
-                      if (state) {
-                          state.currentVttUrl = null;
-                          state.subtitlesData = [];
-                      }
-                  }
-
-                  /**
-                   * Инициализирует синхронизацию субтитров.
-                   */
-                  function setupSubtitles(lang) {
-                      if (typeof initializeSubtitleSync === 'undefined' || !lang) {
-                          console.warn('JS function not defined or language missing.');
-                          return;
-                      }
-
-                      const speakerStyles = allSpeakerStyles[lang] || {};
-                      const vttUrl = vttUrlTemplate.replace('LANGUAGE_PLACEHOLDER', lang);
-
-                      initializeSubtitleSync(
-                          vttUrl,
-                          'youtube-player',
-                          'custom-subtitle-overlay',
-                          speakerStyles
-                      );
-                      console.log(`Subtitles set to: ${lang}`);
-
-                      updateSubtitleEditLink(lang);
-                  }
-
-                  // 4. Добавляем слушателя событий на изменение SELECT
-                  if (select) {
-                      select.addEventListener('change', (event) => {
-                          if (window.subtitleSyncState) window.subtitleSyncState.currentVttUrl = null;
-                          if (toggleSwitch) toggleSwitch.checked = true;
-                          setupSubtitles(event.target.value);
-                      });
-                  }
-
-                  // 5. Добавляем слушателя событий на ПОЛЗУНОК
-                  if (toggleSwitch) {
-                      toggleSwitch.addEventListener('change', (event) => {
-                          if (event.target.checked) {
-                              const currentLang = select ? select.value : defaultLang;
-                              if (currentLang) {
-                                  if (window.subtitleSyncState) window.subtitleSyncState.currentVttUrl = null;
-                                  setupSubtitles(currentLang);
-                              }
-                          }
-                          else {
-                                disableSubtitles();
-                          }
-                      });
-                  }
-
-                  // ✅ НОВАЯ ЛОГИКА ПОЛНОЭКРАННОГО РЕЖИМА
-
-                  // Функция обновления иконки
-                  function updateFullscreenButtonUI() {
-                      if (!fullscreenIcon) return;
-
-                      if (document.fullscreenElement) {
-                          // Если мы в фулскрине -> меняем иконку на "свернуть"
-                          fullscreenIcon.classList.remove('bi-arrows-fullscreen');
-                          fullscreenIcon.classList.add('bi-fullscreen-exit');
-                          fullscreenBtn.title = "Выйти из полноэкранного режима";
-                      } else {
-                          // Если вышли -> меняем иконку на "развернуть"
-                          fullscreenIcon.classList.remove('bi-fullscreen-exit');
-                          fullscreenIcon.classList.add('bi-arrows-fullscreen');
-                          fullscreenBtn.title = "На весь экран";
-                      }
-                  }
-
-                  if (videoContainer && fullscreenBtn) {
-                      fullscreenBtn.addEventListener('click', () => {
-                          if (!document.fullscreenElement) {
-                              // ⚡ ВАЖНО: Разворачиваем КОНТЕЙНЕР, а не видео
-                              videoContainer.requestFullscreen().catch(err => {
-                                  console.error(`Ошибка при попытке включить полноэкранный режим: ${err.message}`);
-                              });
-                          } else {
-                              document.exitFullscreen();
-                          }
-                      });
-
-                      // ⚡ Слушаем событие изменения режима, чтобы менять иконку
-                      document.addEventListener('fullscreenchange', updateFullscreenButtonUI);
-                  }
-                  // -----------------------------------------------------------
-
-                  // 6. Загружаем язык по умолчанию при первом рендеринге
-                  const initialLang = select && select.value ? select.value : defaultLang;
-
-                  window.onYouTubeIframeAPIReady = function() {
-                      console.log('YouTube API is ready. Starting subtitle sync.');
-
-                      if (toggleSwitch) {
-                          toggleSwitch.checked = true;
-                          setupSubtitles(initialLang);
-                      } else {
-                          disableSubtitles();
-                      }
-                  };
-
-                  if (typeof YT !== 'undefined' && YT.Player) {
-                      window.onYouTubeIframeAPIReady();
-                  }
-
-                  updateSubtitleEditLink(initialLang);
-
-              })();
+                window.vttUrlTemplate = "{% url 'films:get_subtitles' film_id=film.id language='LANGUAGE_PLACEHOLDER' %}";
             </script>
+            <script type="module" src="{% static 'films/js/subtitles/subtitles_ui.js' %}"></script>
 
-            {% endif %}
+          {% endif %}
 
         </div>
       </div>
     </div>
   </div>
+
 {% endblock %}

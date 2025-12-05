@@ -1,5 +1,6 @@
 from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
+from django.core.exceptions import ValidationError
 import datetime
 from collections import OrderedDict
 
@@ -128,98 +129,63 @@ class SubtitleSet(MyModel):
     def __str__(self):
         return f"{self.film.name} ({self.language})"
 
-    @staticmethod
-    def format_time(milliseconds):
-        hours, remainder = divmod(milliseconds, 3600000)
-        minutes, remainder = divmod(remainder, 60000)
-        seconds, milliseconds = divmod(remainder, 1000)
-        if hours > 0:
-            return f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}.{int(milliseconds):03}"
-        return f"{int(minutes):02}:{int(seconds):02}.{int(milliseconds):03}"
-
-    def generate_vtt(self):
-        """
-        Генерирует чистый VTT-файл для видеоплеера.
-        Использует стандартный тег <v Name> для спикера.
-        Использует тег <c.класс> для стилизации текста.
-        """
-        vtt_lines = ["WEBVTT\n"]
-
-        # Загружаем все строки, отсортированные по времени
-        lines = self.lines.all().order_by('start_time')
-
-        for line in lines:
-            # Преобразование секунд в миллисекунды для format_time
-            start_time = SubtitleSet.format_time(line.start_time * 1000)
-            end_time = SubtitleSet.format_time(line.end_time * 1000)
-
-            # 1. Формируем строку с таймингами
-            vtt_cue_line = f"{start_time} --> {end_time}"
-            vtt_lines.append(vtt_cue_line)
-            speaker_name = line.name
-            text_content = line.text
-
-            # Имя персонажа обрамляется в тег <v Speaker>
-            if speaker_name:
-                text_content = f"<v {speaker_name}> {text_content.strip()}"
-
-            custom_classes = line.style_classes.strip().split()
-
-            # Собираем финальный контент (обертывая текст и тег спикера в <c.класс>)
-            if custom_classes:
-                class_string = ".".join(custom_classes)
-                text_content = f"<c.{class_string}>{text_content}</c>"
-
-            # Добавляем чистый текст субтитра
-            vtt_lines.append(text_content.strip())
-            vtt_lines.append("\n")
-
-        return "\n".join(vtt_lines)
-
     def get_speaker_colors(self):
         """
-        Возвращает данные в формате initial=... для SpeakerColorFormSet,
-        объединяя текущие стили с новыми именами спикеров из SubtitleLine.
+        Возвращает список словарей {"speaker_name":..., "color_hex":...}
+        Теперь:
+        — учитываются ВСЕ имена спикеров
+        — новые имена получают #ffffff
         """
-        # Сбор уникальных имен из существующих строк субтитров
-        unique_names_qs = self.lines.filter(
-            name__in=[None, '']
-        ).values_list('name', flat=True).distinct()
+        # Все уникальные спикеры
+        unique_names = (
+            self.lines
+            .exclude(name__isnull=True)
+            .exclude(name__exact='')
+            .values_list('name', flat=True)
+            .distinct()
+        )
 
         current_colors = self.speaker_color_map or {}
-        combined_names = OrderedDict(current_colors)
+        combined = OrderedDict()
 
-        # Добавляем новые имена спикеров с белым цветом по умолчанию
-        for name in unique_names_qs:
-            if name not in combined_names:
-                combined_names[name] = '#ffffff'
+        # Сначала — существующие цвета
+        for name, color in current_colors.items():
+            combined[name] = color
 
-        colors_data = []
-        for name, color in combined_names.items():
-            colors_data.append({
-                'speaker_name': name,
-                'color_hex': color
-            })
+        # Потом — новые имена с белым
+        for name in unique_names:
+            if name not in combined:
+                combined[name] = '#FFFFFF'
 
-        return colors_data
+        # Преобразуем в список
+        initial_styles_data = [
+            {"speaker_name": name, "color_hex": color}
+            for name, color in combined.items()
+        ]
+
+        return initial_styles_data
 
     def save_colors(self, formset):
         """
-        Обрабатывает SpeakerColorFormSet, обновляет JSONField и сохраняет модель.
-        Возвращает True при успехе, или вызывает исключение при ошибке сохранения.
+        Сохраняет обновлённую карту цветов.
+        Важно: теперь цвет #FFFFFF сохраняется, а не удаляется.
         """
-        new_speaker_styles = {}
+        updated_colors = {}
 
         for form in formset:
-            # Использование .cleaned_data.get() гарантирует, что мы получим None, если поля нет
-            should_delete = form.cleaned_data.get('DELETE')
+            if not form.cleaned_data:
+                continue
+
+            delete = form.cleaned_data.get('DELETE')
             speaker = form.cleaned_data.get('speaker_name')
             color = form.cleaned_data.get('color_hex')
 
-            if not should_delete and speaker and color and color.lower() != '#ffffff': # should_delete is not None?
-                new_speaker_styles[speaker.strip()] = color.upper()
+            if delete or not speaker:
+                continue
 
-        self.speaker_color_map = new_speaker_styles
+            updated_colors[speaker.strip()] = color.upper()
+
+        self.speaker_color_map = updated_colors
         self.save()
         return True
 
@@ -265,3 +231,12 @@ class SubtitleLine(MyModel):
 
     def __str__(self):
         return f"[{self.start_time:.2f}] {self.text[:40]}..."
+
+    def clean(self):
+        if self.end_time <= self.start_time:
+            raise ValidationError("Время окончания должно быть больше времени начала.")
+        self.text = self.text.strip()
+        if self.name:
+            self.name = self.name.strip()
+        self.style_classes = " ".join(self.style_classes.split())
+
