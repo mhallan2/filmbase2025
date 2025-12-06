@@ -13,6 +13,7 @@ from .services import (
 )
 from .validators import LanguageCodeValidator
 from django.core.exceptions import ValidationError
+from .templatetags.films_tags import ru_plural
 
 
 def check_admin(user):
@@ -434,7 +435,7 @@ def save_speaker_colors(request, film_id, language):
     else:
         messages.error(request, f'Ошибка при сохранении карты цветов: {result}')
 
-    return redirect(f"{reverse('films:subtitle_editor_view', kwargs={'film_id': film_id})}?lang={language.lower}")
+    return redirect(f"{reverse('films:subtitle_editor_view', kwargs={'film_id': film_id})}?lang={language.lower()}")
 
 @user_passes_test(check_admin)
 def delete_subtitles(request, film_id, language):
@@ -452,7 +453,8 @@ def delete_subtitles(request, film_id, language):
     if request.method == 'POST':
         deleted_count, _ = SubtitleLine.objects.filter(subtitle_set=subtitle_set).delete()
         subtitle_set.delete()
-        messages.success(request, f'Удалено {deleted_count} строк субтитров для языка {language.upper()}.')
+        lines_plural = ru_plural(deleted_count, "строка,строки,строк")
+        messages.success(request, f'Удалено {deleted_count} {lines_plural} субтитров для языка {language.upper()}.')
         return redirect('films:film_detail', id=film.id)
 
     return render(request, 'films/subtitle/delete_confirm.html', {
