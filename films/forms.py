@@ -5,6 +5,7 @@ from django.core.validators import MinLengthValidator
 from .models import (
     Country, Genre, Film, Person, SubtitleSet, SubtitleLine
 )
+from .validators import LanguageCodeValidator
 
 
 class CountryForm(forms.ModelForm):
@@ -201,7 +202,7 @@ class SubtitleSetSelectForm(forms.Form):
     language = forms.CharField(
         label='Код языка',
         max_length=2,
-        validators=[MinLengthValidator(2)],
+        validators=[MinLengthValidator(2), LanguageCodeValidator],
         widget=forms.TextInput(attrs={'placeholder': 'ru, en, fr', 'class': 'form-control'})
     )
 

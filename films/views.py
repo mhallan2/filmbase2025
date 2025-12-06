@@ -11,6 +11,8 @@ from django.http import HttpResponse, Http404
 from .services import (
     SubtitleSetService, SubtitleLineService, SubtitleColorService, VTTBuilder
 )
+from .validators import LanguageCodeValidator
+from django.core.exceptions import ValidationError
 
 
 def check_admin(user):
@@ -296,7 +298,7 @@ def subtitle_editor_view(request, film_id):
 
     film = ctx['film']
     subtitle_set = ctx['subtitle_set']
-    current_lang = ctx['current_lang']
+    current_lang = ctx['current_lang']          # всегда lowercase
     available_languages = ctx['available_languages']
     is_new = ctx['is_new']
 
@@ -304,19 +306,43 @@ def subtitle_editor_view(request, film_id):
     # Создание нового языка
     # ------------------------------------------------------------
     if is_new:
-        if current_lang in available_languages:
-            messages.error(request, f'Набор субтитров для {current_lang.upper()} уже существует.')
-        else:
-            subtitle_set = SubtitleSet.objects.create(film=film, language=current_lang)
-            messages.success(request, f'Набор субтитров для "{current_lang}" создан.')
+        # Валидация кода языка (например: только латиница)
+        try:
+            LanguageCodeValidator(current_lang)
+        except ValidationError as e:
+            messages.error(request, f"Ошибка: {e.messages[0]}")
+            return redirect(
+                f"{reverse('films:subtitle_editor_view', kwargs={'film_id': film_id})}"
+            )
 
-        # Всегда нормализуем URL
+        if current_lang in available_languages:
+            messages.error(
+                request,
+                f'Набор субтитров для "{current_lang.upper()}" уже существует.'
+            )
+        else:
+            try:
+                subtitle_set = SubtitleSet.objects.create(
+                    film=film,
+                    language=current_lang
+                )
+                messages.success(
+                    request,
+                    f'Набор субтитров для "{current_lang.upper()}" создан.'
+                )
+            except IntegrityError:
+                messages.error(
+                    request,
+                    f'Набор субтитров для "{current_lang.upper()}" уже существует.'
+                )
+
+        # Всегда нормализуем URL в lowercase
         return redirect(
             f"{reverse('films:subtitle_editor_view', kwargs={'film_id': film_id})}?lang={current_lang}"
         )
 
     # ------------------------------------------------------------
-    # Formsets
+    # Formsets (обычный режим редактирования)
     # ------------------------------------------------------------
     line_formset_instance = subtitle_set if subtitle_set else SubtitleSet(film=film)
     formset = SubtitleLineFormSet(instance=line_formset_instance, prefix='lines')
@@ -336,7 +362,6 @@ def subtitle_editor_view(request, film_id):
         'style_formset': style_formset,
         'select_form': select_form,
     })
-
 
 
 @user_passes_test(check_admin)

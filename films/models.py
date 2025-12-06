@@ -1,4 +1,5 @@
 from django.db import models
+from films.validators import LanguageCodeValidator
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.core.exceptions import ValidationError
 import datetime
@@ -111,7 +112,8 @@ class SubtitleSet(MyModel):
     language = models.CharField(
         max_length=2,
         verbose_name='Язык субтитров',
-        help_text='Например, "en", "ru"'
+        help_text='Например, "en", "ru"',
+        validators=[LanguageCodeValidator]
     )
 
     speaker_color_map = models.JSONField(
