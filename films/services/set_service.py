@@ -51,30 +51,21 @@ class SubtitleSetService:
         return subtitle_set.get_speaker_colors()
 
     def resolve_from_request(self, request, film_id):
-        """
-        Возвращает словарь с ключами: film, subtitle_set, current_lang, available_languages, is_new
-        """
         film = get_object_or_404(Film, id=film_id)
         available_sets_qs = SubtitleSet.objects.filter(film=film).order_by('language')
         available_languages = [s.language for s in available_sets_qs]
 
-        requested_lang = request.GET.get('lang') or request.GET.get('language')
-        current_lang = requested_lang.upper() if requested_lang else (
-            available_languages[0] if available_languages else None
+        requested_raw = request.GET.get('lang') or request.GET.get('language')
+        requested_lang = requested_raw.lower() if requested_raw else None
+
+        current_lang = (
+            requested_lang if requested_lang
+            else (available_languages[0] if available_languages else None)
         )
+
         is_new = request.GET.get('is_new') == 'True'
 
-        subtitle_set = None
-        if current_lang:
-            subtitle_set = available_sets_qs.filter(language__iexact=current_lang).first()
-            if subtitle_set is None and is_new:
-                # try creating — caller will handle redirect or errors
-                try:
-                    subtitle_set = SubtitleSet.objects.create(film=film, language=current_lang)
-                except IntegrityError:
-                    subtitle_set = SubtitleSet.objects.filter(film=film, language__iexact=current_lang).first()
-                except Exception:
-                    subtitle_set = None
+        subtitle_set = available_sets_qs.filter(language=current_lang).first()
 
         return {
             'film': film,

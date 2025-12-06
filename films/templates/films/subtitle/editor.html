@@ -46,7 +46,7 @@
                     data-bs-target="#deleteSubtitlesModal"
                 >
                     <i class="bi-trash"></i>
-                    Удалить субтитры ({{ current_lang }})
+                    Удалить субтитры ({{ current_lang|upper }})
                 </button>
             {% endif %}
         </div>
@@ -60,7 +60,7 @@
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
               </div>
               <div class="modal-body">
-                  Вы уверены, что хотите удалить все субтитры для языка <b>{{ current_lang }}</b>? Это действие необратимо!
+                  Вы уверены, что хотите удалить все субтитры для языка <strong>{{ current_lang|upper }}</strong>? Это действие необратимо!
               </div>
               <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>

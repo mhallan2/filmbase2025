@@ -291,10 +291,6 @@ def get_subtitles(request, film_id, language):
 
 @user_passes_test(check_admin)
 def subtitle_editor_view(request, film_id):
-    """
-    Упрощённый view: собирает контекст и вызывает сервисы для initial данных.
-    Логика создания набора при is_new осталась (чтобы не менять UX).
-    """
     svc = SubtitleSetService()
     ctx = svc.resolve_from_request(request, film_id)
 
@@ -304,21 +300,24 @@ def subtitle_editor_view(request, film_id):
     available_languages = ctx['available_languages']
     is_new = ctx['is_new']
 
-    # Если не найден набор и is_new был True — попытка создания в resolve_from_request уже сделана.
-    if current_lang and subtitle_set is None and is_new:
-        try:
-            subtitle_set, created = svc.get_or_create(film, current_lang)
-            if created:
-                messages.success(request, f'Набор субтитров для "{current_lang}" создан.')
-                return redirect(f"{reverse('films:subtitle_editor_view', kwargs={'film_id': film_id})}?lang={current_lang}")
-        except IntegrityError:
-            messages.error(request, f'Набор субтитров для "{current_lang}" уже существует.')
-            current_lang = None
-        except Exception as e:
-            messages.error(request, f'Ошибка при создании набора: {e}')
-            current_lang = None
+    # ------------------------------------------------------------
+    # Создание нового языка
+    # ------------------------------------------------------------
+    if is_new:
+        if current_lang in available_languages:
+            messages.error(request, f'Набор субтитров для {current_lang.upper()} уже существует.')
+        else:
+            subtitle_set = SubtitleSet.objects.create(film=film, language=current_lang)
+            messages.success(request, f'Набор субтитров для "{current_lang}" создан.')
 
-    # formset instance (existing or temporary)
+        # Всегда нормализуем URL
+        return redirect(
+            f"{reverse('films:subtitle_editor_view', kwargs={'film_id': film_id})}?lang={current_lang}"
+        )
+
+    # ------------------------------------------------------------
+    # Formsets
+    # ------------------------------------------------------------
     line_formset_instance = subtitle_set if subtitle_set else SubtitleSet(film=film)
     formset = SubtitleLineFormSet(instance=line_formset_instance, prefix='lines')
 
@@ -326,8 +325,7 @@ def subtitle_editor_view(request, film_id):
     initial_styles = color_svc.initial_from_set(subtitle_set) if subtitle_set else []
     style_formset = SpeakerColorFormSet(initial=initial_styles, prefix='styles')
 
-    default_lang = current_lang if current_lang else (request.GET.get('lang') or 'RU')
-    select_form = SubtitleSetSelectForm(initial={'language': default_lang})
+    select_form = SubtitleSetSelectForm(initial={'language': current_lang})
 
     return render(request, 'films/subtitle/editor.html', {
         'film': film,
@@ -338,6 +336,8 @@ def subtitle_editor_view(request, film_id):
         'style_formset': style_formset,
         'select_form': select_form,
     })
+
+
 
 @user_passes_test(check_admin)
 def save_subtitle(request, film_id, language):
@@ -357,8 +357,8 @@ def save_subtitle(request, film_id, language):
     line_svc = SubtitleLineService()
     ok, errors = line_svc.save_formset(formset)
     if ok:
-        messages.success(request, f'Субтитры ({language}) успешно обновлены.')
-        return redirect(f"{reverse('films:subtitle_editor_view', kwargs={'film_id': film_id})}?lang={language}")
+        messages.success(request, f'Субтитры ({language.upper()}) успешно обновлены.')
+        return redirect(f"{reverse('films:subtitle_editor_view', kwargs={'film_id': film_id})}?lang={language.lower()}")
     else:
         # подготовка style_formset из текущего набора (без POST)
         color_svc = SubtitleColorService()
@@ -405,11 +405,11 @@ def save_speaker_colors(request, film_id, language):
 
     ok, result = color_svc.apply_formset(sset, style_formset)
     if ok:
-        messages.success(request, f'Карта цветов ({language}) успешно обновлена.')
+        messages.success(request, f'Карта цветов ({language.upper()}) успешно обновлена.')
     else:
         messages.error(request, f'Ошибка при сохранении карты цветов: {result}')
 
-    return redirect(f"{reverse('films:subtitle_editor_view', kwargs={'film_id': film_id})}?lang={language}")
+    return redirect(f"{reverse('films:subtitle_editor_view', kwargs={'film_id': film_id})}?lang={language.lower}")
 
 @user_passes_test(check_admin)
 def delete_subtitles(request, film_id, language):
@@ -427,7 +427,7 @@ def delete_subtitles(request, film_id, language):
     if request.method == 'POST':
         deleted_count, _ = SubtitleLine.objects.filter(subtitle_set=subtitle_set).delete()
         subtitle_set.delete()
-        messages.success(request, f'Удалено {deleted_count} строк субтитров для языка "{language}".')
+        messages.success(request, f'Удалено {deleted_count} строк субтитров для языка {language.upper()}.')
         return redirect('films:film_detail', id=film.id)
 
     return render(request, 'films/subtitle/delete_confirm.html', {
