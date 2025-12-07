@@ -1,10 +1,11 @@
 import re
 from django.core.exceptions import ValidationError
 
+
 def LanguageCodeValidator(value):
     """
-    Разрешает только латинские буквы (a-z, A-Z), длина 2–5 символов.
-    Например: en, fr, ru, zh, pt-br и т.п.
+    Разрешает только латинские буквы (a-z, A-Z)
+    Например: en, fr, ru, zh и т.п.
     """
     regex = r"^[A-Za-z]{2}$"
 

@@ -1,175 +1,195 @@
 from django.core.management.base import BaseCommand, CommandError
 from films.models import Film, SubtitleSet, SubtitleLine
+from django.db import transaction
 import re
 import os
 
-
-# Регулярное выражение для извлечения <v Name>
-SPEAKER_TAG_REGEX = re.compile(r'<v\s*([^>]+)>')
-
-TIME_FORMAT_REGEX = re.compile(r'(\d{1,2}:\d{2}:\d{2}\.\d{3}|\d{2}:\d{2}\.\d{3})')
-
-# КОРРЕКТНЫЙ VTT_CUE_PATTERN: захватывает блоки с опциональными часами.
+# Регулярки
+# Извлечение временных диапазонов в WebVTT (поддерживает HH:MM:SS.mmm и MM:SS.mmm)
 VTT_CUE_PATTERN = re.compile(
-    # Группа 1: Начальное время
-    r'((?:\d{1,2}:)?\d{2}:\d{2}\.\d{3})[^\n]*\s+-->\s+([^\n]+)\n([\s\S]*?)(?=\n\n|\Z)',
-    re.MULTILINE
+    r'((?:\d{1,2}:)?\d{2}:\d{2}[.,]\d{3})\s*-->\s*((?:\d{1,2}:)?\d{2}:\d{2}[.,]\d{3})\s*\n(.*?)(?=\n{2,}|\Z)',
+    re.DOTALL | re.IGNORECASE
 )
 
-# Оставляем, если нужен парсинг VTT стилей <c.класс>
-STYLE_CLASS_REGEX = re.compile(r'<c\.(\w+)>(.*?)<\/c>', re.DOTALL)
+# <v Speaker>
+SPEAKER_TAG_REGEX = re.compile(r'<v\s+([^>]+)>', re.IGNORECASE)
+
+# <c.class1.class2>...<\/c>
+C_TAG_REGEX = re.compile(r'<c\.([^>]+)>', re.IGNORECASE)
+
+# Удаление всех HTML-тегов (после того, как мы убрали <c> и <v>)
+HTML_TAG_REGEX = re.compile(r'</?[^>]+>', re.DOTALL)
+
+# Поддержка BOM
+BOM = '\ufeff'
+
+
+def vtt_time_to_seconds(time_str: str) -> float:
+    """
+    Преобразует VTT время (HH:MM:SS.mmm или MM:SS.mmm) в секунды float.
+    Принимает и запятые, и точки в дробной части.
+    """
+    t = time_str.strip().replace(',', '.')
+    parts = t.split(':')
+    try:
+        if len(parts) == 3:
+            h, m, s = parts
+            return int(h) * 3600 + int(m) * 60 + float(s)
+        elif len(parts) == 2:
+            m, s = parts
+            return int(m) * 60 + float(s)
+        else:
+            raise ValueError("Unexpected time format")
+    except Exception as e:
+        raise ValueError(f"Invalid time value: '{time_str}' ({e})") from e
+
 
 class Command(BaseCommand):
-    help = 'Imports subtitle lines from a standard WebVTT file and links them to a film.'
+    help = 'Import subtitles from a WebVTT file and attach to a film (by kinopoisk_id).'
 
     def add_arguments(self, parser):
         parser.add_argument('kinopoisk_id', type=int, help='Kinopoisk ID of the film.')
-        parser.add_argument('language_code', type=str, help='Language code (e.e., "ru", "en").')
+        parser.add_argument('language_code', type=str, help='Language code (e.g. "ru", "en").')
         parser.add_argument('vtt_file', type=str, help='Path to the .vtt file.')
 
-    def _vtt_time_to_seconds(self, time_str):
-        """Конвертирует строку VTT-времени в секунды (float)."""
-        time_match = TIME_FORMAT_REGEX.search(time_str)
-        if not time_match:
-            raise ValueError(f"Time format not found: {time_str}")
+    def parse_vtt(self, content: str):
+        """
+        Возвращает список dict: {start, end, text, name, style_classes}
+        """
+        # Убираем BOM, ведущие пробелы
+        if content.startswith(BOM):
+            content = content.lstrip(BOM)
 
-        clean_time_str = time_match.group(0).replace(',', '.')
+        # Нормализуем переводы строки
+        content = content.replace('\r\n', '\n').replace('\r', '\n')
 
-        try:
-            parts = clean_time_str.split(':')
-            if len(parts) == 3: # HH:MM:SS.mmm
-                h = float(parts[0])
-                m = float(parts[1])
-                s = float(parts[2])
-            elif len(parts) == 2: # MM:SS.mmm
-                h = 0.0
-                m = float(parts[0])
-                s = float(parts[1])
-            else:
-                raise ValueError("Unexpected number of time parts.")
+        # Простейшая проверка
+        if not content.strip().upper().startswith("WEBVTT"):
+            raise ValueError("File does not start with WEBVTT header.")
 
-            return h * 3600 + m * 60 + s
-        except Exception as e:
-            raise ValueError(f"Invalid time value in VTT: {time_str}") from e
-
-    def parse_vtt(self, file_path):
-        """Парсит VTT файл и возвращает список словарей с данными строк."""
-        if not os.path.exists(file_path):
-            raise CommandError(f'File "{file_path}" does not exist.')
-
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-
-        if not content.startswith("WEBVTT"):
-            raise CommandError("File is not a valid WebVTT format (must start with WEBVTT).")
-
+        # Обрезаем заголовок до первого двойного переноса строки (если есть)
+        # Это пригодно, если в начале есть мета/комментарии
+        # Но не обрезаем все — мы парсим cues в любом случае
         subtitles = []
 
         for match in VTT_CUE_PATTERN.finditer(content):
-            start_time_str = match.group(1).strip()
-            end_line_part = match.group(2).strip()
-            raw_text = match.group(3).strip()
+            start_raw = match.group(1).strip()
+            end_raw = match.group(2).strip()
+            block_text = match.group(3).strip() if match.group(3) else ""
 
-            # Имя спикера по умолчанию
+            # Извлекаем спикера <v Name> (если есть) — берем первое вхождение
             name = None
-            # Используем end_line_part как чистое время окончания,
-            # так как тега спикера там больше нет.
-            end_time_str = end_line_part
+            speaker_search = SPEAKER_TAG_REGEX.search(block_text)
+            if speaker_search:
+                name = speaker_search.group(1).strip()
+                # удаляем только первый тег <v ...>
+                block_text = SPEAKER_TAG_REGEX.sub('', block_text, count=1)
 
-            # 🛑 КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ #1: Ищем тег спикера <v Name> ВНУТРИ текста
-            text = raw_text
+            # Извлекаем все <c.xxx> теги: они дают список классов, разделённых точкой
+            classes = []
+            for c_match in C_TAG_REGEX.finditer(block_text):
+                cls_list = c_match.group(1).strip()
+                if cls_list:
+                    # <c.bold.italic> -> ['bold','italic']
+                    parts = [p.strip() for p in cls_list.split('.') if p.strip()]
+                    classes.extend(parts)
 
-            name_match = SPEAKER_TAG_REGEX.search(text)
+            # Удаляем теги <c.xxx> и любые остальные теги
+            block_text = C_TAG_REGEX.sub('', block_text)
+            # Удаляем закрывающие </c> и закрывающие </v> и др.
+            block_text = HTML_TAG_REGEX.sub('', block_text)
 
-            if name_match:
-                name = name_match.group(1).strip() # Извлекаем имя
-                # 🛑 КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ #2: Удаляем тег спикера ИЗ ТЕКСТА,
-                # чтобы он не попал в поле SubtitleLine.text
-                text = SPEAKER_TAG_REGEX.sub('', text, 1).strip()
-
-            # --- 2. Извлечение Классов Стилизации (<c.loud>) ---
-            style_classes = []
-
-            # Находим все теги <c.класс> и извлекаем класс
-            for style_match in STYLE_CLASS_REGEX.finditer(text):
-                style_classes.append(style_match.group(1).strip())
-
-            # Очищаем текст от всех <c> тегов, оставляя их содержимое
-            # Используем 'text', который теперь без тега <v Name>
-            clean_text = STYLE_CLASS_REGEX.sub(r'\2', text).strip()
-
-            # Финальная очистка текста от любых оставшихся тегов (например, HTML-теги)
-            clean_text = re.sub(r'<[^>]+>', '', clean_text).strip()
-
-            # Формируем JSON-поле style
-            style_data = {'classes': list(set(style_classes))}
+            # Очищаем пробелы и лишние пустые строки внутри cue
+            clean_text = '\n'.join([line.strip() for line in block_text.splitlines() if line.strip()])
 
             try:
-                subtitles.append({
-                    'start': self._vtt_time_to_seconds(start_time_str),
-                    'end': self._vtt_time_to_seconds(end_time_str),
-                    'text': clean_text,
-                    'name': name, # Здесь теперь корректное имя или None
-                    'style_data': style_data
-                })
+                start_sec = vtt_time_to_seconds(start_raw)
+                end_sec = vtt_time_to_seconds(end_raw)
             except ValueError as e:
-                self.stderr.write(f"Skipping subtitle cue due to time error: {e}")
+                # Пропускаем некорректный cue, но логируем в stderr
+                self.stderr.write(f"Skipping cue due to time parse error: {e}")
                 continue
+
+            # Пропускаем пустые тексты
+            if not clean_text:
+                # иногда cue может быть только NOTE или пустым — пропускаем
+                continue
+
+            # Собираем и добавляем подсказку
+            subtitles.append({
+                'start': start_sec,
+                'end': end_sec,
+                'text': clean_text,
+                'name': name or None,
+                # сохраняем уникальные классы в строке через пробел
+                'style_classes': ' '.join(sorted(set(classes))) if classes else ''
+            })
 
         return subtitles
 
-
     def handle(self, *args, **options):
-        kp_id = options['kinopoisk_id']
-        lang = options['language_code']
-        vtt_path = options['vtt_file']
+        kinopoisk_id = options['kinopoisk_id']
+        language_code = (options['language_code'] or '').strip().lower()
+        vtt_file = options['vtt_file']
 
-        if not os.path.exists(vtt_path):
-            raise CommandError(f'File "{vtt_path}" does not exist.')
+        if not language_code:
+            raise CommandError("Language code is required.")
 
-        self.stdout.write(f"Start parsing VTT file: {vtt_path}")
+        if not os.path.exists(vtt_file):
+            raise CommandError(f"File not found: {vtt_file}")
 
-        # 1. Парсинг VTT
+        # Найдём фильм
         try:
-            subtitles_data = self.parse_vtt(vtt_path)
-        except (ValueError, CommandError) as e:
-            raise CommandError(f"Error during VTT parsing: {e}")
-
-        if not subtitles_data:
-            raise CommandError("No valid subtitle cues found in the file.")
-
-        # 2. Поиск фильма
-        try:
-            film = Film.objects.get(kinopoisk_id=kp_id)
+            film = Film.objects.get(kinopoisk_id=kinopoisk_id)
         except Film.DoesNotExist:
-            raise CommandError(f"Film with kinopoisk_id={kp_id} not found.")
+            raise CommandError(f"Film with kinopoisk_id={kinopoisk_id} not found.")
 
-        # 3. Создаем/обновляем Набор Субтитров
-        subtitle_set, created = SubtitleSet.objects.get_or_create(
-            film=film,
-            language=lang
-        )
+        self.stdout.write(f"Importing VTT for film {film.name} (lang={language_code}) from {vtt_file}...")
 
-        action = "Created" if created else "Updated"
-        self.stdout.write(f"Processing {film.name} ({lang}): {action} set.")
+        with open(vtt_file, 'r', encoding='utf-8') as f:
+            content = f.read()
 
-        # 4. Очищаем старые строки
-        subtitle_set.lines.all().delete()
+        try:
+            parsed = self.parse_vtt(content)
+        except ValueError as e:
+            raise CommandError(f"VTT parse error: {e}")
 
-        # 5. Подготавливаем и сохраняем новые строки (Bulk Create)
-        new_lines = []
-        for line_data in subtitles_data:
-            new_lines.append(SubtitleLine(
-                subtitle_set=subtitle_set,
-                start_time=line_data['start'],
-                end_time=line_data['end'],
-                text=line_data['text'],
-                name=line_data.get('name', None),
-                style=line_data.get('style_data', {})
-            ))
+        if not parsed:
+            raise CommandError("No cues found in the VTT file.")
 
-        if new_lines:
-            SubtitleLine.objects.bulk_create(new_lines)
-            self.stdout.write(self.style.SUCCESS(f"  -> Imported {len(new_lines)} lines successfully."))
-        else:
-            self.stdout.write(self.style.WARNING(f"  -> Finished, but found no lines to import."))
+        # Создаём или получаем SubtitleSet (language в lowercase)
+        with transaction.atomic():
+            subtitle_set, created = SubtitleSet.objects.get_or_create(
+                film=film,
+                language=language_code
+            )
+
+            if created:
+                self.stdout.write(self.style.SUCCESS(f"Created subtitle set for {language_code}."))
+            else:
+                self.stdout.write(f"Using existing subtitle set for {language_code} (will overwrite lines).")
+
+            # Удаляем старые строки
+            deleted_count, _ = subtitle_set.lines.all().delete()
+            if deleted_count:
+                self.stdout.write(f"Deleted {deleted_count} existing lines.")
+
+            # Подготавливаем bulk_create
+            new_objs = []
+            for item in parsed:
+                new_objs.append(SubtitleLine(
+                    subtitle_set=subtitle_set,
+                    start_time=item['start'],
+                    end_time=item['end'],
+                    text=item['text'],
+                    name=item['name'],
+                    style_classes=item.get('style_classes', '') or ''
+                ))
+
+            if new_objs:
+                SubtitleLine.objects.bulk_create(new_objs)
+                self.stdout.write(self.style.SUCCESS(f"Imported {len(new_objs)} subtitle lines."))
+            else:
+                self.stdout.write(self.style.WARNING("No subtitle lines to import after parsing."))
+
+        self.stdout.write(self.style.SUCCESS("Import finished."))

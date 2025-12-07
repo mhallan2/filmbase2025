@@ -7,7 +7,6 @@ class SubtitleSetService:
     """
     Сервис для работы с объектом SubtitleSet — получение, создание, подготовка начальных данных.
     """
-
     def get(self, film_id, language):
         """
         Возвращает набор субтитров.
@@ -55,7 +54,7 @@ class SubtitleSetService:
         available_sets_qs = SubtitleSet.objects.filter(film=film).order_by('language')
         available_languages = [s.language for s in available_sets_qs]
 
-        requested_raw = request.GET.get('lang') or request.GET.get('language')
+        requested_raw = request.GET.get('lang')
         requested_lang = requested_raw.lower() if requested_raw else None
 
         current_lang = (

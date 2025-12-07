@@ -199,16 +199,9 @@ SpeakerColorFormSet = forms.formset_factory(
 # =========================================================
 
 class SubtitleSetSelectForm(forms.Form):
-    language = forms.CharField(
+    lang = forms.CharField(
         label='Код языка',
         max_length=2,
         validators=[MinLengthValidator(2), LanguageCodeValidator],
         widget=forms.TextInput(attrs={'placeholder': 'ru, en, fr', 'class': 'form-control'})
     )
-
-    def clean_language(self):
-        """Маленькое, но полезное улучшение UX."""
-        lang = self.cleaned_data['language'].lower().strip()
-        if not lang.isalpha():
-            raise forms.ValidationError('Код языка должен состоять только из букв.')
-        return lang

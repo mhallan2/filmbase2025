@@ -12,7 +12,7 @@ urlpatterns = [
     path('films/create/', views.film_create, name='film_create'),
     path('films/<int:id>/', views.film_detail, name='film_detail'),
     path('films/<int:id>/update/', views.film_update, name='film_update'),
-    path('films/<int:id>/delete/', views.film_delete, name='film_delete'),
+    path('film/<int:id>/delete/', views.film_delete, name='film_delete'),
 
     # ======= COUNTRIES =======
     path('countries/', views.country_list, name='country_list'),

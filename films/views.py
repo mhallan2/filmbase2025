@@ -352,7 +352,7 @@ def subtitle_editor_view(request, film_id):
     initial_styles = color_svc.initial_from_set(subtitle_set) if subtitle_set else []
     style_formset = SpeakerColorFormSet(initial=initial_styles, prefix='styles')
 
-    select_form = SubtitleSetSelectForm(initial={'language': current_lang})
+    select_form = SubtitleSetSelectForm(initial={'lang': current_lang})
 
     return render(request, 'films/subtitle/editor.html', {
         'film': film,
