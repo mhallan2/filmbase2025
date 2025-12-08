@@ -317,6 +317,25 @@
         }
     });
 
+    function renumberRows() {
+        // Находим все строки в таблице
+        const $rows = $('#subtitle-table tbody tr');
+        
+        let visibleIndex = 1;
+        
+        $rows.each(function() {
+            const $row = $(this);
+            
+            // Проверяем, не отмечена ли строка на удаление (если используется логика скрытия)
+            // В вашем случае DELETE не скрывает строку, поэтому достаточно проверить видимость, 
+            // но здесь мы просто нумеруем все строки, которые есть в DOM.
+            
+            // Устанавливаем порядковый номер (visibleIndex) в первую ячейку (тег <td>)
+            $row.find('td:first').text(visibleIndex);
+            visibleIndex++;
+        });
+    }
+    
     // ... (Остальная часть JS-кода остается без изменений) ...
     $(document).ready(function() {
         // --- ЛОГИКА ДЛЯ ФОРМСЕТА СТРОК СУБТИТРОВ ---
@@ -331,17 +350,23 @@
         $('#add-subtitle-row').click(function() {
             const currentTotalForms = parseInt($totalFormsInput.val()) || 0;
 
+            // 1. Создаем HTML для новой формы, используя текущий TOTAL_FORMS как префикс
             let newFormHtml = emptyFormHtml.replace(/__prefix__/g, currentTotalForms);
 
+            // 2. Добавляем строку в таблицу
             $tableBody.append(newFormHtml);
+            
+            // 3. Увеличиваем технический счетчик TOTAL_FORMS для следующей формы
             $totalFormsInput.val(currentTotalForms + 1);
 
-            // Обновляем нумерацию в первой ячейке новой строки
-            const $newRow = $tableBody.find('tr').last();
-            $newRow.find('td:first').text(currentTotalForms + 1);
+            // 🟢 4. Вызываем полную перенумерацию. Это присвоит новой строке правильный ВИЗУАЛЬНЫЙ номер.
+            renumberRows(); // <--- Здесь происходит установка номера
 
-            $newRow.removeClass('table-danger');
+            // 5. Очищаем класс ошибки у новой строки
+            $tableBody.find('tr').last().removeClass('table-danger');
         });
+
+        renumberRows();
 
         // --- ЛОГИКА ДЛЯ ФОРМСЕТА СТИЛЕЙ (Карта цветов) ---
         // Обработка клика по чекбоксу "Сбросить/Удалить"

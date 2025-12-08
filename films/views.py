@@ -299,7 +299,7 @@ def subtitle_editor_view(request, film_id):
 
     film = ctx['film']
     subtitle_set = ctx['subtitle_set']
-    current_lang = ctx['current_lang']          # всегда lowercase
+    current_lang = ctx['current_lang']
     available_languages = ctx['available_languages']
     is_new = ctx['is_new']
 

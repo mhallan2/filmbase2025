@@ -235,6 +235,8 @@ class SubtitleLine(MyModel):
         return f"[{self.start_time:.2f}] {self.text[:40]}..."
 
     def clean(self):
+        if self.start_time is None or self.end_time is None:
+            return
         if self.end_time <= self.start_time:
             raise ValidationError("Время окончания должно быть больше времени начала.")
         self.text = self.text.strip()
